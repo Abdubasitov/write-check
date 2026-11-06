@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% load icons %}
+{% block page_class %}center{% endblock %}
+{% block content %}
+  <h1 class="logo">Записали?</h1>
+  <div class="choice">
+    <a class="btn btn-primary btn-huge" href="{% url 'teacher_new' %}">{% icon "graduation-cap" %}Я агай</a>
+    <a class="btn btn-huge" href="{% url 'join' %}">{% icon "user" %}Я студент</a>
+  </div>
+{% endblock %}

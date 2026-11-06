@@ -1,0 +1,17 @@
+{% load icons %}<template id="mini-teacher-tpl">
+  <div class="mini mini-teacher">
+    <div class="mini-top">
+      <span class="mini-round">Код <b data-mini="code"></b> · раунд <b data-mini="round"></b></span>
+      <button type="button" class="mini-icon" data-mini="expand" title="Развернуть" aria-label="Развернуть">{% icon "maximize-2" %}</button>
+    </div>
+    <div class="mini-counter"><b data-mini="marked">0</b>/<span data-mini="total">0</span></div>
+    <div class="mini-progress"><div class="mini-progress-fill" data-mini="fill"></div></div>
+    <div class="mini-row">
+      <span class="mini-countdown" data-mini="countdown" data-prefix="" hidden>{% icon "timer" %}<span class="cd-text"></span></span>
+      <button type="button" class="mini-reset" data-mini="reset">{% icon "rotate-ccw" %}Сбросить</button>
+    </div>
+    <div class="mini-list-title" data-mini="list-title"></div>
+    <ul class="mini-list" data-mini="list"></ul>
+    <div class="mini-empty" data-mini="empty" hidden></div>
+  </div>
+</template>

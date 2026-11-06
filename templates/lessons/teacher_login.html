@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Вход агая — Записали?{% endblock %}
+{% block page_class %}center{% endblock %}
+{% block content %}
+  <h1>Вход агая</h1>
+  {% if not configured %}
+    <p class="alert" role="alert">Вход агая не настроен: впишите TEACHER_PASSWORD в файл .env и перезапустите сервер.</p>
+  {% elif blocked %}
+    <p class="alert" role="alert">Слишком много неверных попыток. Подождите минуту и попробуйте снова.</p>
+  {% endif %}
+  <form method="post" class="card form" novalidate>
+    {% csrf_token %}
+    {% include "lessons/partials/field.html" with field=form.password %}
+    <button type="submit" class="btn btn-primary btn-big" {% if blocked or not configured %}disabled{% endif %}>Создать урок</button>
+  </form>
+  <a class="back" href="{% url 'home' %}">← На главную</a>
+{% endblock %}

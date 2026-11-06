@@ -1,0 +1,18 @@
+{% load icons %}<template id="mini-student-tpl">
+  <div class="mini mini-student">
+    <div class="mini-top">
+      <span class="mini-round">Раунд <b data-mini="round"></b></span>
+      <span class="mini-countdown" data-mini="countdown" data-prefix="" hidden>{% icon "timer" %}<span class="cd-text"></span></span>
+      <button type="button" class="mini-icon" data-mini="expand" title="Развернуть" aria-label="Развернуть">{% icon "maximize-2" %}</button>
+    </div>
+    <p class="mini-error" data-mini="error" role="alert" hidden></p>
+    <div class="mini-body">
+      <p class="mini-wait" data-mini="waiting">Ждём начала урока</p>
+      <button type="button" class="mini-mark" data-mini="mark">{% icon "check" %}<span data-mini="mark-label">Записал</span></button>
+      <div class="mini-marked" data-mini="marked">
+        <span class="mini-marked-label">{% icon "circle-check" %}Отмечено</span>
+        <button type="button" class="mini-link" data-mini="unmark">Отменить</button>
+      </div>
+    </div>
+  </div>
+</template>

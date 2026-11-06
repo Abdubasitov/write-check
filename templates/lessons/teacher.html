@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% load static icons %}
+{% block title %}Урок {{ room.code }} — Записали?{% endblock %}
+{% block page_class %}wide{% endblock %}
+{% block content %}
+  {# 1. Верхняя панель: статус слева, второстепенные действия справа #}
+  <header class="topbar">
+    <span class="status-chip" id="status-chip" data-status="{{ state.status }}">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="status-text"></span><span id="round-part" hidden><span class="sep" aria-hidden="true">·</span> Раунд <span id="round">{{ state.round }}</span></span>
+    </span>
+    <div class="topbar-actions">
+      <button type="button" class="btn btn-ghost btn-sm" id="sound-toggle" aria-pressed="true" title="Звук вкл">{% icon "bell" %}<span>Звук</span></button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-mini" aria-pressed="false" data-pip-only data-css="{% static 'css/mini.css' %}"
+              title="Маленькое окно поверх VS Code и презентации">{% icon "picture-in-picture-2" %}<span>Мини-окно</span></button>
+      <span class="divider" aria-hidden="true"></span>
+      <button type="button" class="btn btn-ghost btn-sm btn-ghost-danger" id="btn-finish">{% icon "square" %}Завершить урок</button>
+    </div>
+  </header>
+
+  <div class="teacher-top">
+    <section class="code-banner">
+      <span class="code-label">Код урока</span>
+      <span class="room-code room-code-{{ room.code|length }}">{{ room.code }}</span>
+    </section>
+
+    {# 2. Счётчик: только главное и одна главная кнопка #}
+    <section class="card counter-card">
+      <div class="counter" aria-live="polite">
+        Записали: <strong id="marked">{{ state.marked }}</strong> / <span id="total">{{ state.total }}</span>
+      </div>
+      <div class="progress" role="progressbar" aria-label="Записали" aria-valuemin="0"
+           aria-valuemax="{{ state.total }}" aria-valuenow="{{ state.marked }}" id="progress">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+
+      <div class="main-action">
+        <button type="button" class="btn btn-primary btn-big" id="btn-start" hidden>{% icon "play" %}Начать урок</button>
+        <button type="button" class="btn btn-primary btn-big" id="btn-reset" hidden>{% icon "rotate-ccw" %}Сбросить</button>
+        <p class="countdown-line" id="countdown" data-prefix="Автосброс через " aria-live="off" hidden>{% icon "timer" %}<span class="cd-text"></span></p>
+      </div>
+
+      {# 3. Автосброс: сегментированный переключатель (radio — стрелки работают сами) #}
+      <div class="timer-row">
+        <span class="timer-label" id="timer-label">Автосброс</span>
+        <div class="timer-controls">
+        <div class="segmented" role="radiogroup" aria-labelledby="timer-label">
+          <input type="radio" name="timer" id="timer-off" value=""><label for="timer-off">Выкл</label>
+          {% for seconds, label in timer_presets %}<input type="radio" name="timer" id="timer-{{ seconds }}" value="{{ seconds }}"><label for="timer-{{ seconds }}">{{ label }}</label>{% endfor %}
+          <input type="radio" name="timer" id="timer-custom-radio" value="custom"><label for="timer-custom-radio">Своё</label>
+        </div>
+        <span class="custom-timer" id="custom-timer" hidden>
+          <input type="number" id="timer-custom" class="input-sm" min="10" max="3600" step="5" aria-label="Секунд до автосброса">
+          <span class="muted">с</span>
+          <button type="button" class="btn btn-sm btn-primary" id="timer-apply">Ок</button>
+        </span>
+        </div>
+      </div>
+
+      <p class="conn" id="conn" hidden>{% icon "wifi-off" %}Нет связи с сервером, переподключаемся…</p>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2 class="section-title">{% icon "users" %}Ученики</h2>
+    <div class="roster" id="roster"></div>
+  </section>
+
+  <div class="finished-screen" id="finished" hidden>
+    <h1>Урок завершён</h1>
+    <a class="btn btn-primary btn-big" href="{% url 'home' %}">На главную</a>
+  </div>
+
+  {% include "lessons/partials/mini_teacher.html" %}
+  {{ state|json_script:"initial-state" }}
+  <script src="{% static 'js/realtime.js' %}"></script>
+  <script src="{% static 'js/pip.js' %}"></script>
+  <script src="{% static 'js/teacher.js' %}"></script>
+{% endblock %}

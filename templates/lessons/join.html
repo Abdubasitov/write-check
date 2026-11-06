@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% load icons %}
+{% block title %}Вход студента — Записали?{% endblock %}
+{% block page_class %}center{% endblock %}
+{% block content %}
+  <h1>Вход на урок</h1>
+  <form method="post" class="card form" novalidate>
+    {% csrf_token %}
+    {% include "lessons/partials/field.html" with field=form.name %}
+    {% include "lessons/partials/field.html" with field=form.code %}
+    <button type="submit" class="btn btn-primary btn-big">{% icon "log-in" %}Войти</button>
+  </form>
+  <a class="back" href="{% url 'home' %}">← На главную</a>
+{% endblock %}

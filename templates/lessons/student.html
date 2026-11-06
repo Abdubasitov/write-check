@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load static icons %}
+{% block title %}Урок {{ room.code }} — Записали?{% endblock %}
+{% block page_class %}center{% endblock %}
+{% block content %}
+  <section class="card student-card">
+    <header class="student-head">
+      <div class="student-name">{% icon "user" %}<span>{{ student.name }}</span></div>
+      <div class="chips">
+        <span class="chip">Урок {{ room.code }}</span>
+        <span class="chip" id="round-chip" hidden>Раунд <span id="round">{{ state.round }}</span></span>
+        <span class="chip chip-timer" id="countdown" hidden>{% icon "timer" %}<span class="cd-text"></span></span>
+      </div>
+    </header>
+
+    <section id="view-waiting" class="student-view" hidden>
+      <h1 class="waiting">Ждём, когда агай начнёт урок</h1>
+      <div class="dots" aria-hidden="true"><span></span><span></span><span></span></div>
+      <p class="muted hint">Не закрывайте вкладку — кнопка появится сама.</p>
+    </section>
+
+    <section id="view-active" class="student-view" hidden>
+      <button type="button" class="btn btn-mark" id="btn-mark">{% icon "check" %}<span class="btn-label">Записал</span></button>
+      <div class="marked-box" id="marked-box" hidden>
+        <div class="marked-label">{% icon "circle-check" %}Отмечено</div>
+        <button type="button" class="link-btn" id="btn-unmark">Отменить</button>
+      </div>
+      <p class="mark-error" id="mark-error" role="alert" hidden></p>
+      <button type="button" class="btn btn-big btn-pip" id="btn-pip" data-pip-only>{% icon "picture-in-picture-2" %}Свернуть в мини-окно</button>
+      <p class="muted hint" data-pip-only>Окошко останется поверх VS Code — нажимайте «Записал» прямо в нём.</p>
+    </section>
+
+    <section id="view-pip" class="student-view" hidden>
+      <h1 class="waiting">{% icon "picture-in-picture-2" %}Открыто мини-окно</h1>
+      <p class="muted hint">Отмечайтесь в маленьком окошке поверх всех окон.</p>
+      <button type="button" class="btn btn-primary btn-big" id="btn-pip-return">{% icon "maximize-2" %}Вернуть</button>
+    </section>
+
+    <section id="view-message" class="student-view" hidden>
+      <h1 class="waiting" id="message-text"></h1>
+      <a class="btn btn-primary btn-big" id="message-link" href="{% url 'home' %}">На главную</a>
+    </section>
+
+    <p class="conn" id="conn" hidden>{% icon "wifi-off" %}Нет связи с сервером, переподключаемся…</p>
+  </section>
+
+  {% include "lessons/partials/mini_student.html" %}
+  {{ state|json_script:"initial-state" }}
+  <script>window.ZAP = {code: "{{ room.code|escapejs }}", joinUrl: "{% url 'join' %}?code={{ room.code|urlencode }}", miniCss: "{% static 'css/mini.css' %}"};</script>
+  <script src="{% static 'js/realtime.js' %}"></script>
+  <script src="{% static 'js/pip.js' %}"></script>
+  <script src="{% static 'js/student.js' %}"></script>
+{% endblock %}
