@@ -18,7 +18,7 @@ CLOSE_FINISHED = 4000
 CLOSE_KICKED = 4001
 CLOSE_DENIED = 4003
 
-TEACHER_ACTIONS = {"start", "reset", "kick", "finish", "set_timer"}
+TEACHER_ACTIONS = {"start", "reset", "kick", "finish", "set_timer", "hold_auto"}
 STUDENT_ACTIONS = {"mark", "unmark"}
 TIMER_ACTIONS = {"start", "reset", "set_timer"}
 
@@ -111,10 +111,13 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
             return
         if action == "finish":
             timers.cancel(self.code)
+            timers.cancel_auto(self.code)
             await self.channel_layer.group_send(self.group, {"type": "room.finished"})
             return
         if action in TIMER_ACTIONS:
             timers.sync_with_room(self.code, *result)
+        if action == "hold_auto":
+            timers.hold_auto(self.code, result[2])
         if action == "kick" and result:
             presence.forget_student(result)
             await self.channel_layer.group_send(self.group, {"type": "room.kicked", "student_id": result})
@@ -128,7 +131,14 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
             if action == "start":
                 services.start(room)
             elif action == "reset":
-                room = services.reset(room)
+                # клиент шлёт раунд, который видит: если он уже сменился (таймер/авто-раунд
+                # успели раньше) — второй раз не сбрасываем
+                expected = content.get("round")
+                try:
+                    expected = int(expected) if expected is not None else None
+                except (TypeError, ValueError):
+                    return "bad"
+                services.reset(room, expected)
             elif action == "finish":
                 services.finish(room)
                 return None

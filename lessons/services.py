@@ -3,6 +3,7 @@ import secrets
 from datetime import timedelta
 
 from django.db import IntegrityError, transaction
+from django.db.models import F
 from django.utils import timezone
 
 from .models import Mark, Room, Student
@@ -109,6 +110,7 @@ def student_view(state, student_id):
         "marked": bool(me and me["marked"]),
         "name": me["name"] if me else "",
         "deadline": state.get("deadline"),
+        "auto_next_at": state.get("auto_next_at"),
         "now": state.get("now"),
     }
 
@@ -136,20 +138,45 @@ def unmark(student):
     Mark.objects.filter(student=student, round=room.round).delete()
 
 
-def reset(room):
-    """Новый раунд: round + 1, отметки обнуляются у всех."""
+def reset(room, expected_round=None):
+    """Новый раунд: round + 1, отметки обнуляются, таймер выключается (он только на один раунд).
+
+    expected_round — раунд, который заканчиваем. Если он уже сменился (сработал таймер или
+    авто-новый раунд), ничего не делаем и возвращаем None — так не бывает двойного сброса.
+    Условный UPDATE атомарен и в SQLite, где select_for_update ничего не блокирует.
+    """
+    if expected_round is None:
+        expected_round = Room.objects.values_list("round", flat=True).get(pk=room.pk)
     with transaction.atomic():
-        room = Room.objects.select_for_update().get(pk=room.pk)
-        room.round += 1
-        room.save(update_fields=["round"])
-        Mark.objects.filter(student__room=room).delete()  # историю раундов не храним
-    return room
+        updated = Room.objects.filter(pk=room.pk, round=expected_round).update(
+            round=F("round") + 1, timer_seconds=None
+        )
+        if not updated:
+            return None
+        # историю раундов не храним; отметки нового раунда (если уже успели) не трогаем
+        Mark.objects.filter(student__room_id=room.pk, round__lte=expected_round).delete()
+    return Room.objects.get(pk=room.pk)
 
 
 def timer_reset(code, expected_round):
     """Автосброс по таймеру: только если комната жива, идёт урок и раунд не сменился."""
     room = live_rooms().filter(code=code, status=Room.Status.ACTIVE, round=expected_round).first()
-    return reset(room) if room else None
+    return reset(room, expected_round) if room else None
+
+
+def all_marked(room):
+    """Записали все ученики комнаты (как в счётчике: marked == total > 0)."""
+    total = room.students.count()
+    marked = Mark.objects.filter(student__room=room, round=room.round).count()
+    return total > 0 and marked == total
+
+
+def auto_next(code, expected_round):
+    """Авто-новый раунд: только если урок идёт, раунд тот же и по-прежнему записали все."""
+    room = live_rooms().filter(code=code, status=Room.Status.ACTIVE, round=expected_round).first()
+    if room is None or not all_marked(room):
+        return None
+    return reset(room, expected_round)
 
 
 def parse_timer(value):

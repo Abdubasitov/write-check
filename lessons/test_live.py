@@ -7,7 +7,7 @@ from channels.testing import WebsocketCommunicator
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.core.management import call_command
-from django.test import TestCase, TransactionTestCase
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -130,9 +130,54 @@ class ExpiryAndTimerServiceTests(TestCase):
         self.assertEqual(services.timer_reset(self.room.code, 1).round, 2)
 
 
+class RoundEndServiceTests(TestCase):
+    """Конец раунда: таймер выключается, двойного сброса нет, авто-раунд только если записали все."""
+
+    def setUp(self):
+        self.room = Room.objects.create(code="9753", teacher_token="t", timer_seconds=60)
+        self.a = Student.objects.create(room=self.room, name="Айдар", token="a")
+        self.b = Student.objects.create(room=self.room, name="Бек", token="b")
+        services.start(self.room)
+
+    def test_reset_turns_timer_off(self):
+        room = services.reset(self.room)
+        self.assertEqual((room.round, room.timer_seconds), (2, None))
+
+    def test_timer_reset_turns_timer_off(self):
+        room = services.timer_reset(self.room.code, 1)
+        self.assertEqual((room.round, room.timer_seconds), (2, None))
+
+    def test_reset_with_stale_round_does_nothing(self):
+        self.assertEqual(services.reset(self.room, 1).round, 2)
+        self.assertIsNone(services.reset(self.room, 1))  # второй сброс того же раунда
+        self.assertEqual(Room.objects.get(pk=self.room.pk).round, 2)
+
+    def test_reset_keeps_marks_of_new_round(self):
+        services.mark(self.a)
+        services.reset(self.room, 1)
+        services.mark(self.a)  # уже раунд 2
+        self.assertIsNone(services.reset(self.room, 1))  # опоздавший сброс не трогает раунд 2
+        self.assertTrue(Mark.objects.filter(student=self.a, round=2).exists())
+
+    def test_auto_next_only_when_all_marked(self):
+        services.mark(self.a)
+        self.assertIsNone(services.auto_next(self.room.code, 1))  # Бек ещё не записал
+        services.mark(self.b)
+        room = services.auto_next(self.room.code, 1)
+        self.assertEqual((room.round, room.timer_seconds), (2, None))
+        self.assertFalse(Mark.objects.exists())
+        self.assertIsNone(services.auto_next(self.room.code, 1))  # раунд уже другой
+
+    def test_auto_next_empty_room(self):
+        Student.objects.all().delete()
+        self.assertIsNone(services.auto_next(self.room.code, 1))  # 0 из 0 — не «все записали»
+
+
 ORIGIN = (b"origin", b"http://localhost")
+AUTO = 0.3  # settings.AUTO_NEXT_SECONDS в тестах
 
 
+@override_settings(AUTO_NEXT_SECONDS=AUTO)
 class ConsumerTests(TransactionTestCase):
     def setUp(self):
         self.room = Room.objects.create(code="8642", teacher_token="teacher-secret")
@@ -305,21 +350,20 @@ class ConsumerTests(TransactionTestCase):
         self.assertIsNotNone(t["deadline"])
         self.assertEqual(s["deadline"], t["deadline"])  # студент видит тот же отсчёт
 
-        await student.send_json_to({"type": "mark"})
-        await teacher.receive_json_from()
-        await student.receive_json_from()
+        self.assertEqual(len(timers._timers), 1)  # один таймер на комнату
 
-        s = await student.receive_json_from(timeout=3)  # автосброс сервера
+        s = await student.receive_json_from(timeout=3)  # автосброс сервера (никто не отметился)
         t = await teacher.receive_json_from(timeout=3)
         self.assertEqual((s["round"], s["marked"]), (2, False))
         self.assertEqual((t["round"], t["marked"]), (2, 0))
-        self.assertGreater(t["deadline"], t["now"])  # следующий раунд снова с таймером
-        self.assertEqual(len(timers._timers), 1)  # один таймер на комнату
-
-        await teacher.send_json_to({"type": "set_timer", "seconds": None})
-        t = await teacher.receive_json_from()
+        # таймер был только на тот раунд: выключен, сегмент снова «Выкл»
+        self.assertIsNone(t["timer_seconds"])
         self.assertIsNone(t["deadline"])
+        self.assertIsNone(s["deadline"])
         self.assertNotIn(self.room.code, timers._timers)
+        self.assertTrue(await teacher.receive_nothing(timeout=1.3))  # второго автосброса нет
+        room = await database_sync_to_async(Room.objects.get)(pk=self.room.pk)
+        self.assertEqual((room.round, room.timer_seconds), (2, None))
         await teacher.disconnect()
         await student.disconnect()
 
@@ -373,3 +417,172 @@ class ConsumerTests(TransactionTestCase):
         t = await teacher.receive_json_from()
         self.assertFalse(t["students"][0]["online"])
         await teacher.disconnect()
+
+    # --- таймер только на один раунд + авто-новый раунд ---------------------
+
+    async def room_now(self):
+        return await database_sync_to_async(Room.objects.get)(pk=self.room.pk)
+
+    async def started_and_marked(self, timer=None):
+        """Агай + студент, урок идёт, студент отметился (он единственный → записали все)."""
+        teacher, student, _, _ = await self.connect_both()
+        if timer:
+            await teacher.send_json_to({"type": "set_timer", "seconds": timer})
+            await teacher.receive_json_from()
+            await student.receive_json_from()
+        await teacher.send_json_to({"type": "start"})
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await student.send_json_to({"type": "mark"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        return teacher, student, t, s
+
+    async def test_manual_reset_turns_timer_off(self):
+        teacher, student, _, _ = await self.connect_both()
+        await teacher.send_json_to({"type": "set_timer", "seconds": 60})  # до «Начать урок»
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await teacher.send_json_to({"type": "start"})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertIsNotNone(t["deadline"])  # таймер действует на первый раунд
+        await teacher.send_json_to({"type": "reset", "round": 1})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertEqual((t["round"], t["timer_seconds"], t["deadline"]), (2, None, None))
+        self.assertNotIn(self.room.code, timers._timers)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_all_marked_starts_new_round(self):
+        teacher, student, t, s = await self.started_and_marked(timer=60)
+        self.assertEqual((t["marked"], t["total"]), (1, 1))
+        self.assertIsNotNone(t["auto_next_at"])
+        self.assertEqual(s["auto_next_at"], t["auto_next_at"])  # студент видит тот же отсчёт
+        self.assertAlmostEqual(t["auto_next_at"] - t["now"], AUTO, delta=0.2)
+
+        t = await teacher.receive_json_from(timeout=AUTO + 1)  # сервер сам начал новый раунд
+        s = await student.receive_json_from(timeout=1)
+        self.assertEqual((t["round"], t["marked"], t["auto_next_at"]), (2, 0, None))
+        self.assertEqual((s["round"], s["marked"], s["auto_next_at"]), (2, False, None))
+        self.assertEqual((t["timer_seconds"], t["deadline"]), (None, None))  # таймер выключился
+        self.assertEqual(timers._timers, {})
+        self.assertEqual(timers._auto, {})
+        self.assertTrue(await teacher.receive_nothing(timeout=AUTO + 0.3))  # ровно один новый раунд
+        self.assertEqual((await self.room_now()).round, 2)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_auto_next_works_without_teacher_panel(self):
+        teacher, student, _, _ = await self.connect_both()
+        await teacher.send_json_to({"type": "start"})
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await teacher.disconnect()  # агай закрыл панель
+        await student.send_json_to({"type": "mark"})
+        s = await student.receive_json_from()
+        self.assertIsNotNone(s["auto_next_at"])
+        s = await student.receive_json_from(timeout=AUTO + 1)
+        self.assertEqual((s["round"], s["marked"]), (2, False))
+        await student.disconnect()
+
+    async def test_unmark_cancels_auto_next(self):
+        teacher, student, t, _ = await self.started_and_marked()
+        self.assertIsNotNone(t["auto_next_at"])
+        await student.send_json_to({"type": "unmark"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertIsNone(t["auto_next_at"])
+        self.assertIsNone(s["auto_next_at"])
+        self.assertTrue(await teacher.receive_nothing(timeout=AUTO + 0.3))
+        self.assertEqual((await self.room_now()).round, 1)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_new_student_cancels_auto_next(self):
+        teacher, student, t, _ = await self.started_and_marked()
+        self.assertIsNotNone(t["auto_next_at"])
+        # вошёл по HTTP, сокет ещё не открыл — сервер всё равно перепроверит «записали все»
+        await database_sync_to_async(services.join_room)(self.room, "Бек", "bek-token")
+        t = await teacher.receive_json_from(timeout=AUTO + 1)
+        self.assertEqual((t["round"], t["marked"], t["total"]), (1, 1, 2))
+        self.assertIsNone(t["auto_next_at"])
+        self.assertTrue(await teacher.receive_nothing(timeout=AUTO + 0.3))
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_hold_auto_by_teacher(self):
+        teacher, student, _, _ = await self.started_and_marked()
+        await teacher.send_json_to({"type": "hold_auto"})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertIsNone(t["auto_next_at"])
+        self.assertTrue(t["auto_held"])
+        self.assertTrue(await teacher.receive_nothing(timeout=AUTO + 0.3))
+        self.assertEqual((await self.room_now()).round, 1)
+        # unmark → mark в том же раунде — «Подождать» всё ещё действует
+        await student.send_json_to({"type": "unmark"})
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await student.send_json_to({"type": "mark"})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertIsNone(t["auto_next_at"])
+        # агай сбрасывает сам → в новом раунде авто-раунд снова работает
+        await teacher.send_json_to({"type": "reset", "round": 1})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertEqual((t["round"], t["auto_held"]), (2, False))
+        await student.send_json_to({"type": "mark"})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertIsNotNone(t["auto_next_at"])
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_student_cannot_hold_auto(self):
+        teacher, student, _, _ = await self.started_and_marked()
+        await student.send_json_to({"type": "hold_auto"})
+        msg = await student.receive_json_from()
+        self.assertEqual((msg["type"], msg["action"]), ("error", "hold_auto"))
+        t = await teacher.receive_json_from(timeout=AUTO + 1)  # отсчёт не отменился
+        self.assertEqual(t["round"], 2)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_manual_reset_during_countdown_no_double(self):
+        teacher, student, t, _ = await self.started_and_marked()
+        self.assertIsNotNone(t["auto_next_at"])
+        await teacher.send_json_to({"type": "reset", "round": 1})  # «Сбросить» в окне 3 с
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertEqual((t["round"], t["auto_next_at"]), (2, None))
+        self.assertTrue(await teacher.receive_nothing(timeout=AUTO + 0.3))  # авто-раунд не догнал
+        self.assertEqual((await self.room_now()).round, 2)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_late_manual_reset_after_auto_next_ignored(self):
+        teacher, student, _, _ = await self.started_and_marked()
+        t = await teacher.receive_json_from(timeout=AUTO + 1)  # авто-раунд успел первым
+        await student.receive_json_from()
+        self.assertEqual(t["round"], 2)
+        await teacher.send_json_to({"type": "reset", "round": 1})  # клик агая «опоздал»
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertEqual(t["round"], 2)
+        self.assertEqual((await self.room_now()).round, 2)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_auto_next_and_timer_same_moment_no_double(self):
+        # таймер и авто-раунд сработали одновременно — раунд увеличился один раз
+        teacher, student, _, _ = await self.started_and_marked()
+        r1 = await database_sync_to_async(services.auto_next)(self.room.code, 1)
+        r2 = await database_sync_to_async(services.timer_reset)(self.room.code, 1)
+        self.assertEqual(r1.round, 2)
+        self.assertIsNone(r2)
+        self.assertEqual((await self.room_now()).round, 2)
+        await teacher.disconnect()
+        await student.disconnect()

@@ -10,6 +10,12 @@
   var $ = function (id) { return document.getElementById(id); };
   var ended = false;
   var updateCountdown = Realtime.countdown($("countdown"));
+  // все записали → «новый раунд через 3…», потом кнопка «Записал» появится сама
+  var updateAuto = Realtime.countdown($("auto-next"), "", {
+    field: "auto_next_at",
+    format: function (s) { return s + "…"; },
+    doneText: "Новый раунд…",
+  });
   var mini = null;     // {doc, el} пока мини-окно открыто
   var pending = null;  // {action: "mark"|"unmark", round, timer} — ждём подтверждения
   var errorText = "";
@@ -71,7 +77,8 @@
 
     $("round").textContent = state.round;
     $("round-chip").hidden = !active;  // до старта раунд не показываем
-    updateCountdown(active ? state : {});
+    updateCountdown(active && !state.auto_next_at ? state : {});
+    updateAuto(active ? state : {});
     $("view-waiting").hidden = pipOpen || state.status !== "waiting";
     $("view-active").hidden = pipOpen || !active;
     $("view-pip").hidden = !pipOpen;
@@ -110,7 +117,7 @@
       templateId: "mini-student-tpl",
       cssHref: ZAP.miniCss,
       width: 240,
-      height: 140,
+      height: 165,
       onOpen: function (doc) {
         var el = {};
         doc.querySelectorAll("[data-mini]").forEach(function (n) { el[n.getAttribute("data-mini")] = n; });
@@ -119,10 +126,11 @@
         el.expand.addEventListener("click", function () { Pip.close(); window.focus(); });
         mini = { doc: doc, el: el };
         updateCountdown.attach(el.countdown);
+        updateAuto.attach(el.auto);
         render();
       },
       onClose: function () {
-        if (mini) updateCountdown.detach(mini.el.countdown);
+        if (mini) { updateCountdown.detach(mini.el.countdown); updateAuto.detach(mini.el.auto); }
         mini = null;
         render();
       },
@@ -136,6 +144,7 @@
     clearPending();
     Pip.close();
     updateCountdown({});
+    updateAuto({});
     $("view-waiting").hidden = true;
     $("view-active").hidden = true;
     $("view-pip").hidden = true;

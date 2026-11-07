@@ -90,36 +90,74 @@
   }
 
   // --- звук «записали все»: Web Audio, без файлов -------------------------
-  var SOUND_KEY = "zap_sound";
-  var soundOn = true;
-  try { soundOn = localStorage.getItem(SOUND_KEY) !== "off"; } catch (e) {}
+  var SOUND_KEY = "zap_sound";            // "on" | "off"
+  var VARIANT_KEY = "zap_sound_variant";  // "chord" | "bell" | "double"
+  var C5 = 523.25, E5 = 659.25, G5 = 783.99, A5 = 880;
+
+  // Каждый вариант — список нот: [частота, начало (с), длительность (с), громкость, форма, обертоны].
+  // Обертон — [множитель частоты, доля громкости]. Атака 10 мс, затем экспоненциальное затухание.
+  var VARIANTS = {
+    // «успех»: восходящее арпеджио C5→E5→G5 через 90 мс, лёгкий 2-й обертон — «колокольчиком», ~0.75 с
+    chord: [
+      [C5, 0.00, 0.55, 0.22, "sine", [[1, 1], [2, 0.18]]],
+      [E5, 0.09, 0.55, 0.22, "sine", [[1, 1], [2, 0.18]]],
+      [G5, 0.18, 0.57, 0.24, "sine", [[1, 1], [2, 0.18]]],
+    ],
+    // одна чистая нота с долгим затуханием; негармонические обертоны как у колокольчика
+    bell: [[A5, 0, 1.2, 0.35, "sine", [[1, 1], [2.76, 0.22], [5.4, 0.07]]]],
+    // два коротких тона, как прежний сигнал, но мягче: треугольник и плавная атака
+    double: [
+      [660, 0.00, 0.22, 0.30, "triangle", [[1, 1]]],
+      [880, 0.18, 0.26, 0.30, "triangle", [[1, 1]]],
+    ],
+  };
+
+  function load(key, fallback) {
+    try { var v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; }
+  }
+  function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+
+  var soundOn = load(SOUND_KEY, "on") !== "off";
+  var variant = load(VARIANT_KEY, "chord");
+  if (!VARIANTS[variant]) variant = "chord";
   var audioCtx = null;
   var doneRound = null;  // раунд, в котором уже прозвучал сигнал
 
   function unlockAudio() {  // браузер разрешает звук только после действия пользователя
     try {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === "suspended") audioCtx.resume();
+      if (audioCtx.state === "suspended") return audioCtx.resume();
     } catch (e) {}
+    return Promise.resolve();
   }
   document.addEventListener("pointerdown", unlockAudio);
   document.addEventListener("keydown", unlockAudio);
 
-  function beep() {
-    if (!audioCtx || audioCtx.state !== "running") return;
-    var t0 = audioCtx.currentTime;
-    [[880, 0], [1320, 0.16]].forEach(function (n) {
-      var osc = audioCtx.createOscillator();
-      var gain = audioCtx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = n[0];
-      gain.gain.setValueAtTime(0.0001, t0 + n[1]);
-      gain.gain.exponentialRampToValueAtTime(0.35, t0 + n[1] + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + n[1] + 0.28);
-      osc.connect(gain).connect(audioCtx.destination);
-      osc.start(t0 + n[1]);
-      osc.stop(t0 + n[1] + 0.3);
+  function synth(name) {
+    var ctx = audioCtx, t0 = ctx.currentTime + 0.02;
+    VARIANTS[name].forEach(function (n) {
+      var start = t0 + n[1], end = start + n[2];
+      n[5].forEach(function (partial) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = n[4];
+        osc.frequency.value = n[0] * partial[0];
+        var peak = n[3] * partial[1];
+        // рампы на gain — без щелчков в начале и в конце
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(peak, start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, end);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(end + 0.05);
+      });
     });
+  }
+
+  function play(name) {
+    if (!audioCtx) return;  // пользователь ещё ничего не нажимал — браузер звук не даст
+    if (audioCtx.state === "running") synth(name);
+    else audioCtx.resume().then(function () { synth(name); }, function () {});
   }
 
   function allDone() { return state.status === "active" && state.total > 0 && state.marked === state.total; }
@@ -127,21 +165,51 @@
   function checkSound(initial) {
     if (!allDone() || doneRound === state.round) return;
     doneRound = state.round;
-    if (!initial && soundOn) beep();
+    if (!initial && soundOn) play(variant);
   }
 
-  function renderSoundToggle() {
-    var b = $("sound-toggle");
-    Realtime.setIconLabel(b, soundOn ? "bell" : "bell-off", "Звук");
-    b.setAttribute("aria-pressed", String(soundOn));
-    b.title = soundOn ? "Звук вкл" : "Звук выкл";
-    b.classList.toggle("is-off", !soundOn);
+  // --- меню звука: вкл/выкл, вариант, «Проверить» ---------------------------
+  var soundMenu = $("sound-menu"), soundBtn = $("sound-toggle"), soundPop = $("sound-pop");
+  var variantRadios = [].slice.call(document.querySelectorAll('input[name="sound-variant"]'));
+
+  function renderSound() {
+    Realtime.setIconLabel(soundBtn, soundOn ? "bell" : "bell-off", "Звук");
+    soundBtn.classList.toggle("is-off", !soundOn);
+    soundBtn.title = soundOn ? "Звук вкл — выбрать сигнал" : "Звук выкл";
+    $("sound-on").checked = soundOn;
+    $("sound-variants").classList.toggle("is-off", !soundOn);
+    variantRadios.forEach(function (r) { r.checked = r.value === variant; });
   }
 
-  $("sound-toggle").addEventListener("click", function () {
-    soundOn = !soundOn;
-    try { localStorage.setItem(SOUND_KEY, soundOn ? "on" : "off"); } catch (e) {}
-    renderSoundToggle();
+  function setMenu(open, focusBack) {
+    soundPop.hidden = !open;
+    soundBtn.setAttribute("aria-expanded", String(open));
+    if (open) (variantRadios.filter(function (r) { return r.checked; })[0] || $("sound-on")).focus();
+    else if (focusBack) soundBtn.focus();
+  }
+
+  soundBtn.addEventListener("click", function () { setMenu(soundPop.hidden); });
+  document.addEventListener("pointerdown", function (e) {
+    if (!soundPop.hidden && !soundMenu.contains(e.target)) setMenu(false);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !soundPop.hidden) { setMenu(false, true); }
+  });
+  $("sound-on").addEventListener("change", function () {
+    soundOn = this.checked;
+    save(SOUND_KEY, soundOn ? "on" : "off");
+    renderSound();
+  });
+  variantRadios.forEach(function (r) {
+    r.addEventListener("change", function () {
+      if (!r.checked) return;
+      variant = r.value;
+      save(VARIANT_KEY, variant);
+    });
+  });
+  $("sound-test").addEventListener("click", function () {
+    // клик сам по себе разрешает звук; ждём resume, чтобы первая проверка тоже прозвучала
+    unlockAudio().then(function () { play(variant); }, function () {});
   });
 
   // --- таймер автосброса ---------------------------------------------------
@@ -208,10 +276,21 @@
     else if (e.key === "Escape") { closeCustom(); $("timer-custom-radio").focus(); }
   });
 
+  // --- авто-новый раунд: все записали → сервер сам начнёт новый через 3 с ----
+  var updateAuto = Realtime.countdown($("auto-next"), "", {
+    field: "auto_next_at",
+    format: function (s) { return s + "…"; },
+    doneText: "Новый раунд…",
+  });
+  $("btn-hold").addEventListener("click", function () { conn.send("hold_auto"); });
+
   function render() {
     var active = state.status === "active";
     renderTimer();
-    updateCountdown(state);
+    // пока идёт отсчёт авто-раунда, строку автосброса не показываем — один отсчёт за раз
+    updateCountdown(state.auto_next_at ? { now: state.now } : state);
+    updateAuto(state);
+    $("auto-held").hidden = !(state.auto_held && allDone());
 
     $("marked").textContent = state.marked;
     $("total").textContent = state.total;
@@ -288,21 +367,23 @@
       templateId: "mini-teacher-tpl",
       cssHref: $("btn-mini").getAttribute("data-css"),
       width: 300,
-      height: 260,
+      height: 300,
       onOpen: function (doc) {
         var el = {};
         doc.querySelectorAll("[data-mini]").forEach(function (n) { el[n.getAttribute("data-mini")] = n; });
-        el.reset.addEventListener("click", function () { conn.send("reset"); });
+        el.reset.addEventListener("click", resetRound);
+        el.hold.addEventListener("click", function () { conn.send("hold_auto"); });
         el.expand.addEventListener("click", function () { Pip.close(); window.focus(); });
         doc.addEventListener("pointerdown", unlockAudio);  // клик в окошке тоже разрешает звук
         mini = { doc: doc, el: el };
         updateCountdown.attach(el.countdown);
+        updateAuto.attach(el.auto);
         $("btn-mini").setAttribute("aria-pressed", "true");  // ширина не прыгает — меняем только состояние
         $("btn-mini").title = "Закрыть мини-окно";
         render();
       },
       onClose: function () {
-        if (mini) updateCountdown.detach(mini.el.countdown);
+        if (mini) { updateCountdown.detach(mini.el.countdown); updateAuto.detach(mini.el.auto); }
         mini = null;
         $("btn-mini").setAttribute("aria-pressed", "false");
         $("btn-mini").title = "Маленькое окно поверх VS Code и презентации";
@@ -319,6 +400,7 @@
   function showFinished() {
     Pip.close();
     updateCountdown({});
+    updateAuto({});
     document.querySelectorAll(".page > :not(#finished)").forEach(function (el) { el.hidden = true; });
     $("finished").hidden = false;
   }
@@ -337,12 +419,14 @@
   });
 
   $("btn-start").addEventListener("click", function () { conn.send("start"); });
-  $("btn-reset").addEventListener("click", function () { conn.send("reset"); });
+  // шлём раунд, который видим: если сервер уже начал новый (таймер/авто-раунд), второго сброса не будет
+  function resetRound() { conn.send("reset", { round: state.round }); }
+  $("btn-reset").addEventListener("click", resetRound);
   $("btn-finish").addEventListener("click", function () {
     if (confirm("Завершить урок? Код перестанет работать.")) conn.send("finish");
   });
 
-  renderSoundToggle();
+  renderSound();
   render();
   checkSound(true);  // если все уже записали до загрузки страницы — не пищим
 })();

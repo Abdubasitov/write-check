@@ -10,7 +10,25 @@
       <span id="status-text"></span><span id="round-part" hidden><span class="sep" aria-hidden="true">·</span> Раунд <span id="round">{{ state.round }}</span></span>
     </span>
     <div class="topbar-actions">
-      <button type="button" class="btn btn-ghost btn-sm" id="sound-toggle" aria-pressed="true" title="Звук вкл">{% icon "bell" %}<span>Звук</span></button>
+      {# звук «записали все»: меню — вкл/выкл, вариант сигнала, «Проверить» #}
+      <div class="sound-menu" id="sound-menu">
+        <button type="button" class="btn btn-ghost btn-sm" id="sound-toggle" aria-haspopup="dialog" aria-expanded="false"
+                aria-controls="sound-pop" title="Звук «все записали»">{% icon "bell" %}<span>Звук</span></button>
+        <div class="sound-pop" id="sound-pop" role="dialog" aria-label="Звук «все записали»" hidden>
+          <label class="sound-switch">
+            <input type="checkbox" id="sound-on" role="switch">
+            <span class="sound-switch-track" aria-hidden="true"></span>
+            <span>Сигнал, когда записали все</span>
+          </label>
+          <fieldset class="sound-variants" id="sound-variants">
+            <legend>Какой сигнал</legend>
+            <label><input type="radio" name="sound-variant" value="chord"><span>Аккорд</span></label>
+            <label><input type="radio" name="sound-variant" value="bell"><span>Колокольчик</span></label>
+            <label><input type="radio" name="sound-variant" value="double"><span>Двойной</span></label>
+          </fieldset>
+          <button type="button" class="btn btn-sm sound-test" id="sound-test">{% icon "play" %}Проверить</button>
+        </div>
+      </div>
       <button type="button" class="btn btn-ghost btn-sm" id="btn-mini" aria-pressed="false" data-pip-only data-css="{% static 'css/mini.css' %}"
               title="Маленькое окно поверх VS Code и презентации">{% icon "picture-in-picture-2" %}<span>Мини-окно</span></button>
       <span class="divider" aria-hidden="true"></span>
@@ -35,6 +53,12 @@
       </div>
 
       <div class="main-action">
+        {# все записали → сервер сам начнёт новый раунд через 3 с; «Подождать» отменяет на этот раунд #}
+        <div class="auto-next" id="auto-next" data-prefix="Новый раунд через " role="status" hidden>
+          <p class="auto-next-text">{% icon "check-check" %}<span><b>Все записали!</b> <span class="cd-text"></span></span></p>
+          <button type="button" class="btn btn-sm auto-next-hold" id="btn-hold">{% icon "pause" %}Подождать</button>
+        </div>
+        <p class="countdown-line" id="auto-held" hidden>{% icon "pause" %}Авто-раунд отложен — нажмите «Сбросить», когда будете готовы</p>
         <button type="button" class="btn btn-primary btn-big" id="btn-start" hidden>{% icon "play" %}Начать урок</button>
         <button type="button" class="btn btn-primary btn-big" id="btn-reset" hidden>{% icon "rotate-ccw" %}Сбросить</button>
         <p class="countdown-line" id="countdown" data-prefix="Автосброс через " aria-live="off" hidden>{% icon "timer" %}<span class="cd-text"></span></p>

@@ -18,7 +18,8 @@
         doc.title = document.title;
         var meta = doc.createElement("meta");
         meta.name = "color-scheme";
-        meta.content = "light dark";
+        meta.content = "dark";  // только тёмная тема
+        doc.documentElement.style.background = "#141513";  // без белой вспышки до загрузки mini.css
         doc.head.append(meta);
         var link = doc.createElement("link");
         link.rel = "stylesheet";

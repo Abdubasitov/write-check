@@ -31,6 +31,9 @@ TEACHER_PASSWORD = os.getenv("TEACHER_PASSWORD", "")
 TEACHER_MAX_FAILS = 5
 TEACHER_FAIL_WINDOW = 60  # секунд
 
+# Все записали → через столько секунд сервер сам начинает новый раунд
+AUTO_NEXT_SECONDS = 3
+
 INSTALLED_APPS = [
     "daphne",  # runserver становится ASGI — WebSocket работает и локально
     "django.contrib.admin",

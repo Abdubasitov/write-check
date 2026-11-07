@@ -61,7 +61,11 @@
   // Обратный отсчёт до автосброса. Сервер присылает deadline и своё now —
   // по разнице учитываем расхождение часов компьютера и сервера.
   // Возвращает update(state); update.attach(el)/detach(el) — доп. места (мини-окно).
-  function countdown(el, prefix) {
+  // opts: field — какое поле state считать (по умолчанию deadline), format(sec), doneText.
+  function countdown(el, prefix, opts) {
+    opts = opts || {};
+    var field = opts.field || "deadline";
+    var doneText = opts.doneText || "Сброс…";
     var els = [el];
     var deadlineMs = null;
     var offsetMs = 0;
@@ -70,25 +74,26 @@
       var m = Math.floor(sec / 60), s = sec % 60;
       return m + ":" + (s < 10 ? "0" : "") + s;
     }
+    var format = opts.format || fmt;
 
     function tick() {
       var text = null;
       if (deadlineMs !== null) {
         var left = Math.max(0, Math.ceil((deadlineMs - (Date.now() + offsetMs)) / 1000));
-        text = left > 0 ? fmt(left) : "…";
+        text = left > 0 ? format(left) : "…";
       }
       els.forEach(function (e) {
         var p = e.getAttribute("data-prefix");
         if (p === null) p = prefix === undefined ? "Сброс через " : prefix;
         e.hidden = text === null;
         // внутри может быть иконка — пишем только в .cd-text
-        if (text !== null) (e.querySelector(".cd-text") || e).textContent = text === "…" ? "Сброс…" : p + text;
+        if (text !== null) (e.querySelector(".cd-text") || e).textContent = text === "…" ? doneText : p + text;
       });
     }
 
     setInterval(tick, 250);
     function update(state) {
-      deadlineMs = state.deadline ? state.deadline * 1000 : null;
+      deadlineMs = state[field] ? state[field] * 1000 : null;
       if (state.now) offsetMs = state.now * 1000 - Date.now();
       tick();
     }
