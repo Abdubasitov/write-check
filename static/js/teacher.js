@@ -86,9 +86,17 @@
   }
 
   // Строка таблицы: имя | статус | когда | крестик (виден при наведении/фокусе, место зарезервировано)
+  // «Внимание»: у присутствующих статус показывает, нажал ли «Я слушаю»
+  var ATTENTION_STATUS = {
+    yes: { icon: "ear", text: "Слушает" },
+    no: { icon: "triangle-alert", text: "Не ответил на «Внимание»" },
+  };
+
   function fillRow(row, s) {
     var st = s.group === "question" ? QUESTION[s.question] || QUESTION.question : STATUS[s.group] || STATUS.wait;
-    row.className = "roster-row r-" + s.group;
+    var att = state.attention && s.group !== "away" ? (s.attention_ack ? "yes" : "no") : null;
+    if (att) st = ATTENTION_STATUS[att];
+    row.className = "roster-row r-" + s.group + (att ? " att-" + att : "");
     row.textContent = "";
 
     var name = document.createElement("span");
@@ -219,6 +227,34 @@
   }
 
   function allDone() { return state.status === "active" && state.total > 0 && state.marked === state.total; }
+
+  // «Внимание»: все присутствующие нажали «Я слушаю» → короткий сигнал (по переключателю
+  // «Сигнал, когда записали все» — тот же выбранный звук) и надпись «Все слушают»
+  function allListening() { return !!state.attention && state.total > 0 && state.attention_acked === state.total; }
+  var listenedAt = null;  // attention_at, для которого сигнал уже прозвучал
+  function checkListening(initial) {
+    if (!allListening() || listenedAt === state.attention_at) return;
+    listenedAt = state.attention_at;
+    if (!initial && soundOn) play(variant);
+  }
+
+  function toggleAttention() {
+    conn.send(state.attention ? "attention_end" : "attention");
+  }
+
+  function renderAttention() {
+    var on = !!state.attention;
+    var btn = $("btn-attention");
+    Realtime.setIconLabel(btn, on ? "play" : "megaphone", on ? "Продолжить урок" : "Внимание");
+    btn.classList.toggle("is-on", on);
+    btn.setAttribute("aria-pressed", String(on));
+    btn.title = on ? "Снять «Внимание» у всех студентов" : "Всем студентам: красный экран «Посмотрите на доску»";
+    $("attention-box").hidden = !on;
+    $("att-acked").textContent = state.attention_acked || 0;
+    $("att-total").textContent = state.total;
+    $("att-all").hidden = !allListening();
+    $("attention-box").classList.toggle("is-all", allListening());
+  }
 
   function checkSound(initial) {
     if (!allDone() || doneRound === state.round) return;
@@ -377,7 +413,12 @@
 
   function renderAuto() {
     var on = !!state.auto_next_enabled, sec = state.auto_next_seconds;
-    $("auto-toggle-label").textContent = on ? "Авто-раунд · " + fmtSec(sec) : "Авто-раунд выкл";
+    // «Авто-раунд · 3 с» / «Авто-раунд выкл»; на узкой полосе слово «Авто-раунд» прячется (CSS)
+    var label = $("auto-toggle-label"), word = document.createElement("span");
+    word.className = "auto-word";
+    word.textContent = on ? "Авто-раунд · " : "Авто-раунд ";
+    label.textContent = "";
+    label.append(word, document.createTextNode(on ? fmtSec(sec) : "выкл"));
     autoBtn.classList.toggle("is-off", !on);
     autoBtn.title = on
       ? "Все записали → новый раунд через " + fmtSec(sec)
@@ -551,6 +592,7 @@
     $("progress").setAttribute("aria-valuemax", state.total);
     $("progress").setAttribute("aria-valuenow", state.marked);
     $("btn-reset").hidden = !active;
+    renderAttention();
 
     if (state.now) clockOffset = state.now * 1000 - Date.now();
     renderRoster();
@@ -650,6 +692,12 @@
     e.total.textContent = state.total;
     e.fill.style.width = (state.total ? Math.round((state.marked / state.total) * 100) : 0) + "%";
     e.reset.hidden = !active;
+    var on = !!state.attention;
+    e["att-count"].hidden = !on;
+    e["att-text"].textContent = allListening() ? "Все слушают" : "Слушают " + (state.attention_acked || 0) + " / " + state.total;
+    e.attention.classList.toggle("is-on", on);
+    e["attention-label"].textContent = on ? "Продолжить" : "Внимание";
+    e.attention.title = on ? "Продолжить урок — снять «Внимание»" : "Внимание — всем посмотреть на доску";
     var qs = questions();
     e.questions.textContent = "";
     qs.forEach(function (s) { e.questions.append(studentChip(doc, s)); });
@@ -682,12 +730,13 @@
       templateId: "mini-teacher-tpl",
       cssHref: $("btn-mini").getAttribute("data-css"),
       width: 300,
-      height: 300,
+      height: 340,
       onOpen: function (doc) {
         var el = {};
         doc.querySelectorAll("[data-mini]").forEach(function (n) { el[n.getAttribute("data-mini")] = n; });
         el.reset.addEventListener("click", resetRound);
         el.hold.addEventListener("click", function () { conn.send("hold_auto"); });
+        el.attention.addEventListener("click", toggleAttention);
         el.expand.addEventListener("click", function () { Pip.close(); window.focus(); });
         doc.addEventListener("pointerdown", unlockAudio);  // клик в окошке тоже разрешает звук
         mini = { doc: doc, el: el };
@@ -723,7 +772,7 @@
   var conn = Realtime.connect(state.code, {
     role: "teacher",
     onMessage: function (msg) {
-      if (msg.type === "state") { state = msg; render(); checkSound(false); checkQuestions(); }
+      if (msg.type === "state") { state = msg; render(); checkSound(false); checkQuestions(); checkListening(false); }
       else if (msg.type === "finished") showFinished();
     },
     onStatus: function (ok) { $("conn").hidden = ok; },
@@ -736,6 +785,7 @@
   // шлём раунд, который видим: если сервер уже начал новый (таймер/авто-раунд), второго сброса не будет
   function resetRound() { conn.send("reset", { round: state.round }); }
   $("btn-reset").addEventListener("click", resetRound);
+  $("btn-attention").addEventListener("click", toggleAttention);
   $("btn-finish").addEventListener("click", function () {
     if (confirm("Завершить урок? Код перестанет работать.")) conn.send("finish");
   });
@@ -744,4 +794,5 @@
   render();
   checkSound(true);  // если все уже записали до загрузки страницы — не пищим
   checkQuestions();  // вопросы, открытые до загрузки, — без сигнала (запоминаем как известные)
+  checkListening(true);
 })();

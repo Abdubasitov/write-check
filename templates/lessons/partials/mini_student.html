@@ -27,6 +27,12 @@
       <button type="button" class="mini-q-opt" data-mini="ask-question">{% icon "circle-help" %}Вопрос</button>
       <button type="button" class="mini-q-opt" data-mini="ask-bug">{% icon "bug" %}Ошибка</button>
     </div>
+    {# «Внимание» агая: красный экран поверх всего окошка #}
+    <div class="mini-attention" data-mini="attention" role="alertdialog" aria-label="Внимание" hidden>
+      <p class="mini-attention-title">{% icon "triangle-alert" %}ВНИМАНИЕ</p>
+      <p class="mini-attention-sub">Посмотрите на доску</p>
+      <button type="button" class="mini-ack" data-mini="ack">{% icon "ear" %}<span data-mini="ack-label">Я слушаю</span></button>
+    </div>
     <div class="mini-bottom" data-mini="bottom">
       <button type="button" class="mini-link mini-away-btn" data-mini="ask" aria-expanded="false">{% icon "hand" %}Вопрос</button>
       <button type="button" class="mini-link mini-away-btn" data-mini="away">{% icon "door-open" %}Я вышел</button>

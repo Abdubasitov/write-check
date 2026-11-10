@@ -292,4 +292,52 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .mini-q-text { flex: 1; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; }
 .mini-q-open .mini-link { color: var(--q-text); opacity: 1; }
 
+/* «Внимание»: у агая — кнопка и «Слушают X / Y»; у студента — красный экран на всё окошко */
+.mini-att-row { flex: none; }
+.mini-att-count { display: inline-flex; align-items: center; gap: 4px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mini-attention-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: .4em;
+  border: 2px solid #c2410c;
+  border-radius: 8px;
+  background: #c2410c;
+  color: #ffffff;
+  font-weight: 700;
+  padding: 4px 12px;
+}
+.mini-attention-btn.is-on { background: var(--surface); color: var(--text); }
+.mini-student { position: relative; }
+.mini-attention {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  background: #b3261e;
+  color: #ffffff;
+  text-align: center;
+}
+.mini-attention p { margin: 0; }
+.mini-attention-title { display: inline-flex; align-items: center; gap: 6px; font-size: 24px; font-weight: 900; letter-spacing: .04em; }
+.mini-attention-sub { font-size: 14px; font-weight: 700; }
+.mini-ack {
+  display: inline-flex;
+  align-items: center;
+  gap: .4em;
+  border: 0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #b3261e;
+  font-size: 18px;
+  font-weight: 800;
+  padding: 8px 18px;
+}
+.mini-ack:focus-visible { outline: 3px solid #ffffff; outline-offset: 2px; }
+
 @media (prefers-reduced-motion: reduce) { .mini-progress-fill { transition: none; } }

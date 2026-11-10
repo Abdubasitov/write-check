@@ -115,15 +115,15 @@ class JoinTests(TestCase):
     def test_single_full_name_field(self):
         r = self.client.get(self.url)
         self.assertContains(r, "Фамилия и имя")
-        self.assertContains(r, 'placeholder="Абдубаситов Абай"')
+        self.assertContains(r, 'placeholder="Иванов Иван"')
         self.assertContains(r, 'maxlength="40"')
 
     def test_full_name_unique_case_insensitive(self):
-        self.join("Абдубаситов Абай")
-        r = self.join("  абдубаситов   АБАЙ ", client=self.client_class())  # пробелы схлопываются
+        self.join("Иванов Иван")
+        r = self.join("  иванов   ИВАН ", client=self.client_class())  # пробелы схлопываются
         self.assertContains(r, "Имя занято")
         self.assertEqual(Student.objects.count(), 1)
-        r = self.join("Абдубаситов Айбек", client=self.client_class())  # другое имя — можно
+        r = self.join("Иванов Пётр", client=self.client_class())  # другое имя — можно
         self.assertEqual(r.status_code, 302)
 
     def test_wrong_code(self):

@@ -23,7 +23,7 @@ class JoinForm(forms.Form):
             "min_length": NAME_LENGTH_ERROR,
             "max_length": NAME_LENGTH_ERROR,
         },
-        widget=forms.TextInput(attrs={"autocomplete": "name", "placeholder": "Абдубаситов Абай"}),
+        widget=forms.TextInput(attrs={"autocomplete": "name", "placeholder": "Иванов Иван"}),
     )
     code = forms.CharField(
         label="Код урока",

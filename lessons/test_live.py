@@ -284,6 +284,69 @@ class QuestionServiceTests(TestCase):
         self.assertFalse(services.answer(self.room, self.a.id))  # уже нет вопроса
 
 
+class AttentionServiceTests(TestCase):
+    """«Внимание»: «Я слушаю» только при активном режиме, сброс, счётчик без вышедших."""
+
+    def setUp(self):
+        self.room = Room.objects.create(code="3690", teacher_token="t")
+        self.a = Student.objects.create(room=self.room, name="Айдар", token="a")
+        self.b = Student.objects.create(room=self.room, name="Бек", token="b")
+        self.c = Student.objects.create(room=self.room, name="Вера", token="c")
+
+    def state(self):
+        return services.room_state(self.room)
+
+    def test_ack_only_when_active(self):
+        self.assertFalse(services.ack_attention(self.a))
+        state = self.state()
+        self.assertEqual((state["attention"], state["attention_acked"]), (False, 0))
+        services.start_attention(self.room)
+        self.assertTrue(services.ack_attention(self.a))
+        state = self.state()
+        self.assertEqual((state["attention"], state["attention_acked"], state["total"]), (True, 1, 3))
+        services.end_attention(self.room)
+        self.assertFalse(services.ack_attention(self.b))
+        state = self.state()
+        self.assertEqual((state["attention"], state["attention_acked"]), (False, 0))
+        self.assertFalse(any(s["attention_ack"] for s in state["students"]))
+
+    def test_new_attention_resets_acks(self):
+        services.start_attention(self.room)
+        services.ack_attention(self.a)
+        services.ack_attention(self.b)
+        first = Room.objects.get(pk=self.room.pk).attention_at
+        services.start_attention(self.room)
+        state = self.state()
+        self.assertEqual(state["attention_acked"], 0)
+        self.assertGreaterEqual(Room.objects.get(pk=self.room.pk).attention_at, first)
+
+    def test_away_not_counted(self):
+        services.start_attention(self.room)
+        services.ack_attention(self.a)
+        services.ack_attention(self.b)
+        services.set_away(self.c, True)
+        state = self.state()
+        self.assertEqual((state["attention_acked"], state["total"]), (2, 2))  # все оставшиеся слушают
+
+    def test_student_sees_only_own_ack(self):
+        services.start_attention(self.room)
+        services.ack_attention(self.a)
+        state = self.state()
+        va, vb = services.student_view(state, self.a.id), services.student_view(state, self.b.id)
+        self.assertEqual((va["attention"], va["attention_ack"]), (True, True))
+        self.assertEqual((vb["attention"], vb["attention_ack"]), (True, False))
+        self.assertNotIn("attention_acked", va)
+        self.assertNotIn("students", va)
+
+    def test_marks_and_rounds_work_during_attention(self):
+        services.start_attention(self.room)
+        self.assertTrue(services.mark(self.a))
+        services.ask(self.b, "question")
+        services.reset(self.room)
+        state = self.state()
+        self.assertEqual((state["round"], state["attention"], state["questions"]), (2, True, 1))
+
+
 class ExpiryAndTimerServiceTests(TestCase):
     def setUp(self):
         self.room = Room.objects.create(code="3579", teacher_token="t")
@@ -906,6 +969,49 @@ class ConsumerTests(TransactionTestCase):
         t = await teacher.receive_json_from()
         s = await student.receive_json_from()
         self.assertEqual((t["questions"], s["question"], s["away"]), (0, None, True))
+        await teacher.disconnect()
+        await student.disconnect()
+
+    # --- «Внимание» -----------------------------------------------------------
+
+    async def test_attention_flow(self):
+        teacher, student, _, _ = await self.connect_both()
+        await student.send_json_to({"type": "ack"})  # «Внимания» нет — ошибка
+        msg = await student.receive_json_from()
+        self.assertEqual((msg["type"], msg["action"]), ("error", "ack"))
+        await teacher.send_json_to({"type": "attention"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((t["attention"], t["attention_acked"], t["total"]), (True, 0, 1))
+        self.assertEqual((s["attention"], s["attention_ack"]), (True, False))
+        self.assertIsNotNone(s["attention_at"])
+        await student.send_json_to({"type": "ack"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((t["attention_acked"], t["students"][0]["attention_ack"], s["attention_ack"]), (1, True, True))
+        await teacher.send_json_to({"type": "attention"})  # повторное — «Я слушаю» сброшены
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((t["attention_acked"], s["attention_ack"]), (0, False))
+        await teacher.send_json_to({"type": "attention_end"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((t["attention"], s["attention"]), (False, False))
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_attention_permissions(self):
+        teacher, student, _, _ = await self.connect_both()
+        for action in ("attention", "attention_end"):  # студент не может звать «Внимание»
+            await student.send_json_to({"type": action})
+            msg = await student.receive_json_from()
+            self.assertEqual((msg["type"], msg["action"]), ("error", action))
+        await teacher.send_json_to({"type": "ack"})  # агай не нажимает «Я слушаю» за студента
+        msg = await teacher.receive_json_from()
+        self.assertEqual((msg["type"], msg["action"]), ("error", "ack"))
+        self.assertTrue(await teacher.receive_nothing())
+        room = await self.room_now()
+        self.assertIsNone(room.attention_at)
         await teacher.disconnect()
         await student.disconnect()
 

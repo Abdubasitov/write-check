@@ -29,6 +29,7 @@
     back: function (s) { return !s.away; },
     ask: function (s) { return !!s.question; },
     resolve: function (s) { return !s.question; },
+    ack: function (s) { return s.attention_ack || !s.attention; },
   };
   var ERRORS = {
     mark: "Не получилось отметить: урок уже закончился.",
@@ -37,6 +38,7 @@
     back: "Не получилось вернуться. Нажмите ещё раз.",
     ask: "Вопрос не отправлен. Нажмите ещё раз.",
     resolve: "Не получилось снять вопрос. Нажмите ещё раз.",
+    ack: "",  // «Внимание» уже закончилось — оверлей уберёт ближайший state
   };
 
   function ordinal(n) { return n + "-й"; }  // 1-й, 2-й, 3-й… — в мужском роде у всех чисел «-й»
@@ -85,7 +87,7 @@
   }
 
   function onError(msg) {
-    if (!ERRORS[msg.action]) return;
+    if (!(msg.action in ERRORS)) return;
     clearPending();
     errorText = ERRORS[msg.action];
     render();
@@ -142,8 +144,139 @@
     $("btn-ask").disabled = !!asking;
     $("btn-ask").setAttribute("aria-expanded", String(choiceOpen));
     $("ask-choice").hidden = !choiceOpen || asked;
+    renderAttention(active, away);
     renderMini(active, marking, unmarking, away, busy, asked, asking, resolving, queue);
   }
+
+  // --- «Внимание» агая ------------------------------------------------------
+  // Браузер не даёт заблокировать мышь или вывести окно вперёд. Делаем всё разрешённое:
+  // красный экран поверх страницы и мини-окна, громкий сигнал, системное уведомление,
+  // мигающий заголовок вкладки — пока студент не нажмёт «Я слушаю».
+  var ATTENTION_SOUND = [  // три нисходящих тона C6 → G5 → C5: не похоже на остальные сигналы
+    [1046.5, 0.00, 0.26, 0.5],
+    [783.99, 0.30, 0.26, 0.5],
+    [523.25, 0.60, 0.50, 0.55],
+  ];
+  var audioCtx = null;
+  function getAudio() {
+    try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    return audioCtx;
+  }
+  function unlockAudio() {
+    var c = getAudio();
+    if (c && c.state === "suspended") return c.resume().then(renderNotes, renderNotes);
+    renderNotes();
+    return Promise.resolve();
+  }
+  function playAttention() {
+    var c = getAudio();
+    if (!c) return;
+    function go() {
+      var t0 = c.currentTime + 0.02;
+      ATTENTION_SOUND.forEach(function (n) {
+        var start = t0 + n[1], end = start + n[2];
+        [[1, 1], [2, 0.3]].forEach(function (partial) {
+          var osc = c.createOscillator(), gain = c.createGain();
+          osc.type = "triangle";
+          osc.frequency.value = n[0] * partial[0];
+          gain.gain.setValueAtTime(0, start);
+          gain.gain.linearRampToValueAtTime(n[3] * partial[1], start + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.0001, end);
+          osc.connect(gain).connect(c.destination);
+          osc.start(start);
+          osc.stop(end + 0.05);
+        });
+      });
+    }
+    if (c.state === "running") go();
+    else c.resume().then(go, function () {});  // заблокирован — плашка «включить звук» уже видна
+  }
+
+  var attentionNote = null;
+  function notifyAttention() {
+    try {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      if (document.hasFocus() && !document.hidden) return;  // страница перед глазами — хватит экрана
+      attentionNote = new Notification("⚠ Внимание — посмотрите на доску", {
+        body: "Агай просит посмотреть на доску", tag: "zap-attention", requireInteraction: true,
+      });
+      attentionNote.onclick = function () { window.focus(); attentionNote && attentionNote.close(); };
+    } catch (e) {}
+  }
+  function closeNote() {
+    if (attentionNote) { try { attentionNote.close(); } catch (e) {} attentionNote = null; }
+  }
+
+  var baseTitle = document.title, blinkTimer = null;
+  function setBlink(on) {
+    if (on && !blinkTimer) {
+      var flip = false;
+      blinkTimer = setInterval(function () {
+        flip = !flip;
+        document.title = flip ? "⚠ ВНИМАНИЕ" : baseTitle;
+      }, 800);
+      document.title = "⚠ ВНИМАНИЕ";
+    } else if (!on && blinkTimer) {
+      clearInterval(blinkTimer);
+      blinkTimer = null;
+      document.title = baseTitle;
+    }
+  }
+
+  var lastAttentionAt = null, overlayShown = false;
+  function renderAttention(active, away) {
+    var show = !ended && active && !away && !!state.attention && !state.attention_ack;
+    // новое «Внимание» (другой момент) → сигнал и уведомление; при входе в урок посреди «Внимания» — тоже
+    if (show && state.attention_at !== lastAttentionAt) {
+      lastAttentionAt = state.attention_at;
+      playAttention();
+      notifyAttention();
+    }
+    if (!state.attention) lastAttentionAt = null;
+    if (!show) closeNote();
+    setBlink(show);
+    var acking = pending && pending.action === "ack";
+    $("attention-overlay").hidden = !show;
+    $("btn-ack").disabled = !!acking;
+    $("btn-ack").querySelector(".btn-label").textContent = acking ? "Отправляю…" : "Я слушаю";
+    document.querySelectorAll(".page > :not(#attention-overlay)").forEach(function (el) { el.inert = show; });
+    if (show && !overlayShown) $("btn-ack").focus();
+    overlayShown = show;
+  }
+  // оверлей модальный: Esc ничего не закрывает, фокус не уходит с «Я слушаю»
+  document.addEventListener("keydown", function (e) {
+    if (overlayShown && e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); }
+    // единственная кнопка на экране — Tab не уводит фокус ни в страницу, ни в адресную строку
+    if (overlayShown && e.key === "Tab") { e.preventDefault(); $("btn-ack").focus(); }
+  }, true);
+  document.addEventListener("focusin", function (e) {
+    if (overlayShown && !$("attention-overlay").contains(e.target)) $("btn-ack").focus();
+  });
+
+  // --- плашки при входе: звук, уведомления, мини-окно -----------------------
+  var NOTIFY_KEY = "zap_notify_prompt";  // "off" — не предлагать снова
+  var PIP_KEY = "zap_pip_hint";          // "seen" — подсказку закрыли
+  function load(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function save(key, v) { try { localStorage.setItem(key, v); } catch (e) {} }
+
+  function renderNotes() {
+    var c = audioCtx;
+    $("note-sound").hidden = !(c && c.state !== "running");
+    $("note-notify").hidden = !("Notification" in window && Notification.permission === "default" && load(NOTIFY_KEY) !== "off");
+    $("note-pip").hidden = !(Pip.supported && load(PIP_KEY) !== "seen");
+  }
+  $("note-sound-btn").addEventListener("click", unlockAudio);
+  $("note-notify-btn").addEventListener("click", function () {
+    try {
+      var done = function (p) { if ((p || Notification.permission) === "denied") save(NOTIFY_KEY, "off"); renderNotes(); };
+      var r = Notification.requestPermission(done);
+      if (r && r.then) r.then(done, done);
+    } catch (e) { renderNotes(); }
+  });
+  $("note-notify-close").addEventListener("click", function () { save(NOTIFY_KEY, "off"); renderNotes(); });
+  $("note-pip-close").addEventListener("click", function () { save(PIP_KEY, "seen"); renderNotes(); });
+  document.addEventListener("pointerdown", unlockAudio);
+  document.addEventListener("keydown", unlockAudio);
 
   function renderMini(active, marking, unmarking, away, busy, asked, asking, resolving, queue) {
     if (!mini) return;
@@ -163,6 +296,11 @@
     e["q-text"].textContent = queue || "Вопрос отправлен";
     e.resolve.disabled = !!resolving;
     e.resolve.textContent = resolving ? "Снимаю…" : "Разобрался";
+    // «Внимание» — красный экран и в мини-окне (оно уже поверх VS Code)
+    var acking = pending && pending.action === "ack";
+    e.attention.hidden = !overlayShown;
+    e.ack.disabled = !!acking;
+    e["ack-label"].textContent = acking ? "Отправляю…" : "Я слушаю";
     e.away.disabled = !!busy;
     e.back.disabled = !!busy;
     e["back-label"].textContent = busy ? "Возвращаюсь…" : "Я вернулся";
@@ -190,6 +328,9 @@
         el["ask-question"].addEventListener("click", function () { ask("question"); });
         el["ask-bug"].addEventListener("click", function () { ask("bug"); });
         el.resolve.addEventListener("click", function () { send("resolve"); });
+        el.ack.addEventListener("click", function () { send("ack"); });
+        doc.addEventListener("pointerdown", unlockAudio);  // клик в окошке тоже разрешает звук
+        save(PIP_KEY, "seen");  // мини-окно открыли — подсказка больше не нужна
         el.expand.addEventListener("click", function () { Pip.close(); window.focus(); });
         mini = { doc: doc, el: el };
         updateCountdown.attach(el.countdown);
@@ -210,6 +351,12 @@
     ended = true;
     clearPending();
     Pip.close();
+    $("attention-overlay").hidden = true;
+    overlayShown = false;
+    setBlink(false);
+    closeNote();
+    document.querySelectorAll(".page > *").forEach(function (el) { el.inert = false; });
+    $("student-notes").hidden = true;
     updateCountdown({});
     updateAuto({});
     $("view-active").hidden = true;
@@ -253,6 +400,7 @@
   $("ask-question").addEventListener("click", function () { ask("question"); });
   $("ask-bug").addEventListener("click", function () { ask("bug"); });
   $("btn-resolve").addEventListener("click", function () { send("resolve"); });
+  $("btn-ack").addEventListener("click", function () { send("ack"); });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && choiceOpen) { choiceOpen = false; render(); $("btn-ask").focus(); }
   });
@@ -262,5 +410,7 @@
     $("btn-pip-return").addEventListener("click", function () { Pip.close(); });
   }
 
+  getAudio();     // без клика браузер обычно создаёт контекст «suspended» → покажем «включить звук»
+  renderNotes();
   render();
 })();

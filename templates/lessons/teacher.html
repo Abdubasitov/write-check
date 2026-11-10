@@ -12,7 +12,7 @@
         <span id="status-text"></span><span id="round-part" hidden><span class="sep" aria-hidden="true">·</span> Раунд <span id="round">{{ state.round }}</span></span>
       </span>
       {# код скрыт → компактный чип; клик снова показывает большую карточку #}
-      <button type="button" class="code-chip" id="code-chip" hidden title="Показать код крупно">{% icon "eye" %}<span>Код <b>{{ room.code }}</b></span></button>
+      <button type="button" class="code-chip" id="code-chip" hidden title="Показать код крупно">{% icon "eye" %}<span><span class="code-chip-word">Код </span><b>{{ room.code }}</b></span></button>
       {# есть вопросы → «✋ N»; клик — к таблице. Мигает при новом вопросе (даже без звука) #}
       <button type="button" class="code-chip q-chip" id="q-chip" hidden title="Вопросы — показать в списке">{% icon "hand" %}<b id="q-count">0</b><span class="sr-only"> вопросов</span></button>
     </div>
@@ -25,7 +25,7 @@
           <label class="sound-switch">
             <input type="checkbox" id="sound-on" role="switch">
             <span class="sound-switch-track" aria-hidden="true"></span>
-            <span>Сигнал, когда записали все</span>
+            <span>Сигнал, когда записали все (и «Все слушают»)</span>
           </label>
           <fieldset class="sound-variants" id="sound-variants">
             <legend>Какой сигнал</legend>
@@ -77,7 +77,9 @@
               title="Маленькое окно поверх VS Code и презентации">{% icon "picture-in-picture-2" %}<span>Мини-окно</span></button>
       {% include "lessons/partials/theme_toggle.html" with ghost=True %}
       <span class="divider" aria-hidden="true"></span>
-      <button type="button" class="btn btn-ghost btn-sm btn-ghost-danger" id="btn-finish">{% icon "square" %}Завершить урок</button>
+      {# «Внимание»: у всех студентов красный экран «посмотрите на доску»; пока включено — «Продолжить урок» #}
+      <button type="button" class="btn btn-sm btn-attention" id="btn-attention" aria-pressed="false">{% icon "megaphone" %}<span>Внимание</span></button>
+      <button type="button" class="btn btn-ghost btn-sm btn-ghost-danger" id="btn-finish" title="Завершить урок">{% icon "square" %}<span>Завершить урок</span></button>
     </div>
   </header>
 
@@ -96,6 +98,12 @@
       <div class="progress" role="progressbar" aria-label="Записали" aria-valuemin="0"
            aria-valuemax="{{ state.total }}" aria-valuenow="{{ state.marked }}" id="progress">
         <div class="progress-fill" id="progress-fill"></div>
+      </div>
+
+      {# режим «Внимание»: сколько нажали «Я слушаю» (без вышедших) #}
+      <div class="attention-box" id="attention-box" role="status" hidden>
+        <p class="attention-count">{% icon "ear" %}<span>Слушают: <b id="att-acked">0</b> / <span id="att-total">0</span></span></p>
+        <span class="attention-all" id="att-all" hidden>{% icon "check-check" %}Все слушают</span>
       </div>
 
       <div class="main-action">

@@ -19,10 +19,12 @@ CLOSE_KICKED = 4001
 CLOSE_DENIED = 4003
 
 # start — только для совместимости со старыми вкладками: урок теперь начинается сразу
+# answer — «Ответил» на вопрос студента; attention/attention_end — «Внимание» / «Продолжить урок»
 TEACHER_ACTIONS = {"start", "reset", "kick", "finish", "set_timer", "hold_auto", "set_auto_next",
-                   "answer"}  # answer — «Ответил» на вопрос студента
-# away/back — «Я вышел» / «Я вернулся», ask/resolve — «✋ Вопрос» / «Разобрался»; всё только о себе
-STUDENT_ACTIONS = {"mark", "unmark", "away", "back", "ask", "resolve"}
+                   "answer", "attention", "attention_end"}
+# away/back — «Я вышел» / «Я вернулся», ask/resolve — «✋ Вопрос» / «Разобрался», ack — «Я слушаю»;
+# всё только о себе
+STUDENT_ACTIONS = {"mark", "unmark", "away", "back", "ask", "resolve", "ack"}
 TIMER_ACTIONS = {"start", "reset", "set_timer"}
 
 
@@ -169,6 +171,10 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
                 except (TypeError, ValueError):
                     return "bad"
                 services.answer(room, sid)
+            elif action == "attention":
+                services.start_attention(room)
+            elif action == "attention_end":
+                services.end_attention(room)
             room.refresh_from_db()
             return (room.status, room.timer_seconds, room.round)
         student = Student.objects.filter(pk=self.student_id, room=room).first()
@@ -185,6 +191,9 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
                 return "bad"  # неверный тип или студент «вышел»
         elif action == "resolve":
             services.resolve(student)
+        elif action == "ack":
+            if not services.ack_attention(student):
+                return "bad"  # «Внимания» сейчас нет
         else:
             services.set_away(student, action == "away")
         return None

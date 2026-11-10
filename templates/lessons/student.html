@@ -59,6 +59,33 @@
     <p class="conn" id="conn" hidden>{% icon "wifi-off" %}Нет связи с сервером, переподключаемся…</p>
   </section>
 
+  {# плашки при входе: показываются по одной, каждая — один раз (localStorage) #}
+  <div class="student-notes" id="student-notes">
+    <p class="note-bar" id="note-sound" hidden>
+      {% icon "volume-2" %}<span>Браузер заблокировал звук — без него можно не услышать «Внимание» агая.</span>
+      <button type="button" class="btn btn-sm btn-primary" id="note-sound-btn">Нажмите, чтобы включить звук</button>
+    </p>
+    <p class="note-bar" id="note-notify" hidden>
+      {% icon "bell" %}<span>Разрешите уведомления, чтобы не пропустить «Внимание» агая.</span>
+      <button type="button" class="btn btn-sm btn-primary" id="note-notify-btn">Разрешить</button>
+      <button type="button" class="note-close" id="note-notify-close" aria-label="Не сейчас" title="Не сейчас">{% icon "x" %}</button>
+    </p>
+    <p class="note-bar" id="note-pip" hidden>{# не data-pip-only: pip.js удаляет такие элементы, а JS их ищет #}
+      {% icon "picture-in-picture-2" %}<span>Нажмите «Свернуть в мини-окно» — так вы увидите «Внимание» и кнопку «Записал» поверх VS Code.</span>
+      <button type="button" class="note-close" id="note-pip-close" aria-label="Понятно" title="Понятно">{% icon "x" %}</button>
+    </p>
+  </div>
+
+  {# «Внимание» агая: красный экран поверх всего, Esc не закрывает, фокус на «Я слушаю» #}
+  <div class="attention-overlay" id="attention-overlay" role="alertdialog" aria-modal="true"
+       aria-labelledby="attention-title" aria-describedby="attention-sub" hidden>
+    <div class="attention-inner">
+      <p class="attention-title" id="attention-title">{% icon "triangle-alert" %}ВНИМАНИЕ</p>
+      <p class="attention-sub" id="attention-sub">Посмотрите на доску</p>
+      <button type="button" class="btn attention-ack" id="btn-ack">{% icon "ear" %}<span class="btn-label">Я слушаю</span></button>
+    </div>
+  </div>
+
   {% include "lessons/partials/mini_student.html" %}
   {{ state|json_script:"initial-state" }}
   <script>window.ZAP = {code: "{{ room.code|escapejs }}", joinUrl: "{% url 'join' %}?code={{ room.code|urlencode }}", miniCss: "{% static 'css/mini.css' %}"};</script>

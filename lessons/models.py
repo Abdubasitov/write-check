@@ -26,6 +26,8 @@ class Room(models.Model):
     # все записали → новый раунд через N с (агай меняет в меню «Авто-раунд»; из панели — целые 1–60)
     auto_next_enabled = models.BooleanField(default=True)
     auto_next_seconds = models.FloatField(default=default_auto_next_seconds)
+    # «Внимание»: агай позвал всех посмотреть на доску; null — режим выключен
+    attention_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -49,6 +51,8 @@ class Student(models.Model):
     QUESTION_TYPES = (("question", "Вопрос"), ("bug", "Ошибка в коде"))
     question_type = models.CharField(max_length=10, choices=QUESTION_TYPES, null=True, blank=True)
     question_at = models.DateTimeField(null=True, blank=True)
+    # «Я слушаю» на текущее «Внимание»; сбрасывается у всех при новом «Внимании»
+    attention_ack_at = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

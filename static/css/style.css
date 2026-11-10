@@ -29,6 +29,11 @@
   --q-bg: #3b3110;
   --q-border: #e3b341;
   --q-text: #ffd666;
+  /* «Внимание»: оранжевая кнопка агая, красный экран студента (белый текст ≥ 6:1) */
+  --att: #ff9f43;
+  --att-text: #1a1205;
+  --att-soft: #3d2510;
+  --alarm: #b3261e;
 }
 
 /* Светлая: тёплый белый фон, тёмно-зелёный акцент (белый текст на нём 5.3:1),
@@ -57,6 +62,10 @@
   --q-bg: #fff3c4;
   --q-border: #b08600;
   --q-text: #6b4e00;  /* на --q-bg 6.8:1 */
+  --att: #c2410c;     /* белый текст 5.2:1 */
+  --att-text: #ffffff;
+  --att-soft: #ffedd5;
+  --alarm: #b3261e;
 }
 :root[data-theme="light"] .btn-primary:hover,
 :root[data-theme="light"] .btn-mark:hover { filter: brightness(1.12); }
@@ -218,7 +227,7 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
 .status-chip[data-status="active"] .status-dot { background: var(--accent); box-shadow: 0 0 0 4px var(--done-bg); }
 .status-chip[data-status="finished"] .status-dot { background: var(--danger); }
 .sep { margin-right: 4px; color: var(--muted); }
-.topbar-status { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.topbar-status { display: flex; align-items: center; gap: 8px; flex: none; }  /* не сжимается — иначе чипы уезжают под кнопки */
 /* код скрыт → компактный чип рядом со статусом; клик возвращает большую карточку */
 .code-chip {
   display: inline-flex;
@@ -245,13 +254,13 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
    (подпись остаётся для скринридера, у кнопок есть title). Состояние авто-раунда и
    «Завершить урок» видны всегда. */
 @media (max-width: 1399px) {
-  #btn-mini > span, .topbar .theme-toggle > span > span {
+  #btn-mini > span, .topbar .theme-toggle > span > span, #btn-finish > span {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
   }
-  #btn-mini, .topbar .theme-toggle { padding: 8px 12px; min-width: 44px; }
+  #btn-mini, .topbar .theme-toggle, #btn-finish { padding: 8px 12px; min-width: 44px; }
 }
 @media (max-width: 1179px) {
-  #sound-toggle > span, #status-text, #round-part .sep {
+  #sound-toggle > span, #status-text, #round-part .sep, .code-chip-word, .auto-word {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
   }
   #sound-toggle { padding: 8px 12px; min-width: 44px; }
@@ -337,6 +346,27 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
 .notify-status.is-bad { color: var(--danger); }
 #sound-pop { width: 320px; }
 @media (prefers-reduced-motion: reduce) { .sound-switch-track, .sound-switch-track::after { transition: none; } }
+/* «Внимание» у агая: заметная оранжевая; во время режима — «Продолжить урок» с оранжевой рамкой */
+.btn-attention { background: var(--att); border-color: var(--att); color: var(--att-text); }
+.btn-attention:hover { border-color: var(--att); filter: brightness(1.08); }
+.btn-attention.is-on { background: var(--att-soft); color: var(--text); }
+.attention-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: var(--att-soft);
+  border: 2px solid var(--att);
+}
+.attention-count { margin: 0; display: flex; align-items: center; gap: 10px; font-size: 1.6rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.attention-count b { color: var(--att); }
+:root[data-theme="light"] .attention-count b { color: var(--att); }
+.attention-all { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; color: var(--done-border); }
+.attention-box.is-all { background: var(--done-bg); border-color: var(--done-border); }
+.attention-box.is-all .attention-count b { color: var(--done-border); }
 .btn-ghost-danger { color: var(--danger); }
 .btn-ghost-danger:hover { background: var(--danger-bg); }
 
@@ -536,6 +566,10 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
 .r-offline .r-status { color: var(--muted); }
 .r-away .r-name, .r-away .r-status { color: var(--muted); }
 .r-away .r-name { font-weight: 500; }
+/* «Внимание»: кто не ответил — красноватый статус, кто слушает — зелёный */
+.att-no .r-status { color: var(--danger); }
+.att-yes .r-status { color: var(--done-border); }
+.att-no .r-status .icon, .att-yes .r-status .icon { color: inherit; }  /* не красная «Ждём»-иконка */
 /* вопрос: жёлтая строка в самом верху, «ждёт 1:20» + «Ответил» */
 .roster-row.r-question { background: var(--q-bg); box-shadow: inset 4px 0 0 var(--q-border); border-top-color: var(--q-border); }
 .r-question .r-status { color: var(--q-text); }
@@ -592,6 +626,65 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
 /* «Я вышел» у студента — вторичная, небольшая */
 .btn-away { color: var(--muted); }
 .btn-away:hover { color: var(--text); }
+/* «Внимание» у студента: красный экран поверх всего */
+.attention-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--alarm);
+  color: #ffffff;
+  text-align: center;
+}
+.attention-inner { display: flex; flex-direction: column; align-items: center; gap: 24px; max-width: 760px; }
+.attention-title { margin: 0; display: flex; align-items: center; gap: 16px; font-size: clamp(2.4rem, 8vw, 4.4rem); font-weight: 900; letter-spacing: .04em; line-height: 1.1; }
+.attention-title .icon { width: 1em; height: 1em; }
+.attention-sub { margin: 0; font-size: clamp(1.3rem, 4vw, 2rem); font-weight: 700; }
+.attention-ack {
+  min-width: 320px;
+  min-height: 96px;
+  font-size: 1.8rem;
+  background: #ffffff;
+  border-color: #ffffff;
+  color: var(--alarm);
+}
+.attention-ack:hover { border-color: #ffffff; filter: brightness(.95); }
+.attention-ack:focus-visible { outline: 4px solid #ffffff; outline-offset: 4px; }
+.attention-ack[disabled] { opacity: .8; cursor: progress; }
+/* плашки при входе: звук, уведомления, мини-окно — над карточкой студента */
+.student-notes { order: -1; width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 8px; }
+.note-bar {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px 10px 16px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: .85rem;
+  text-align: left;
+}
+.note-bar > span { flex: 1 1 260px; }
+.note-close {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.note-close:hover { background: var(--off-bg); color: var(--text); }
+.note-close:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 /* ✋ вопрос у студента */
 .student-secondary { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .ask-choice { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }

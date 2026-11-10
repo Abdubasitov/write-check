@@ -122,6 +122,7 @@ def room_state(room):
         Mark.objects.filter(student__room=room, round=room.round).values_list("student_id", "created_at")
     )
     rows = []
+    attention = room.attention_at is not None
     for s in students:
         away = s.away_since is not None
         marked = s.id in mark_times and not away
@@ -141,6 +142,7 @@ def room_state(room):
             "question": question,  # None | "question" | "bug"
             "question_at": s.question_at.timestamp() if question and s.question_at else None,
             "group": student_group(online, marked, away, question),
+            "attention_ack": attention and s.attention_ack_at is not None,  # нажал «Я слушаю»
         })
     present = [r for r in rows if not r["away"]]
     ordered = sort_students(rows)
@@ -159,6 +161,10 @@ def room_state(room):
         "total": len(present),
         "away": len(rows) - len(present),
         "questions": len(queue),
+        # «Внимание»: сколько из присутствующих (без вышедших) нажали «Я слушаю»
+        "attention": attention,
+        "attention_at": room.attention_at.timestamp() if attention else None,
+        "attention_acked": sum(1 for r in present if r["attention_ack"]),
     }
 
 
@@ -173,6 +179,9 @@ def student_view(state, student_id):
         # только свой вопрос и место в очереди — чужих имён студенту не шлём
         "question": me["question"] if me else None,
         "queue_pos": me.get("queue_pos") if me else None,
+        "attention": state.get("attention", False),
+        "attention_at": state.get("attention_at"),  # новое «Внимание» = новый момент → снова сигнал
+        "attention_ack": bool(me and me.get("attention_ack")),
         "name": me["name"] if me else "",
         "deadline": state.get("deadline"),
         "auto_next_at": state.get("auto_next_at"),
@@ -234,6 +243,28 @@ def ask(student, question_type):
 def resolve(student):
     """«Разобрался» (студент) — вопрос снят."""
     Student.objects.filter(pk=student.pk).update(question_type=None, question_at=None)
+
+
+def start_attention(room):
+    """«Внимание»: новый момент и сброс «Я слушаю» у всех (повторное «Внимание» — заново)."""
+    with transaction.atomic():
+        Room.objects.filter(pk=room.pk).update(attention_at=timezone.now())
+        Student.objects.filter(room_id=room.pk).update(attention_ack_at=None)
+
+
+def end_attention(room):
+    """«Продолжить урок»: режим внимания выключен у всех."""
+    with transaction.atomic():
+        Room.objects.filter(pk=room.pk).update(attention_at=None)
+        Student.objects.filter(room_id=room.pk).update(attention_ack_at=None)
+
+
+def ack_attention(student):
+    """«Я слушаю». False — «Внимания» сейчас нет."""
+    if not Room.objects.filter(pk=student.room_id, attention_at__isnull=False).exists():
+        return False
+    Student.objects.filter(pk=student.pk, attention_ack_at__isnull=True).update(attention_ack_at=timezone.now())
+    return True
 
 
 def answer(room, student_id):
