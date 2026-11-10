@@ -51,7 +51,7 @@
             <label><input type="radio" name="auto-delay" value="10"><span>10 с</span></label>
             <label><input type="radio" name="auto-delay" value="custom" id="auto-delay-custom"><span id="auto-custom-label">Своё</span></label>
             <span class="custom-timer auto-custom" id="auto-custom" hidden>
-              <input type="number" id="auto-custom-input" class="input-sm" min="1" max="60" step="1" aria-label="Секунд до нового раунда">
+              <input type="number" id="auto-custom-input" class="input-sm" min="1" max="60" step="1" inputmode="numeric" aria-label="Секунд до нового раунда">
               <span class="muted">с</span>
               <button type="button" class="btn btn-sm btn-primary" id="auto-custom-apply">Ок</button>
             </span>
@@ -109,7 +109,7 @@
           <input type="radio" name="timer" id="timer-custom-radio" value="custom"><label for="timer-custom-radio">Своё</label>
         </div>
         <span class="custom-timer" id="custom-timer" hidden>
-          <input type="number" id="timer-custom" class="input-sm" min="10" max="3600" step="5" aria-label="Секунд до автосброса">
+          <input type="number" id="timer-custom" class="input-sm" min="10" max="3600" step="5" inputmode="numeric" aria-label="Секунд до автосброса">
           <span class="muted">с</span>
           <button type="button" class="btn btn-sm btn-primary" id="timer-apply">Ок</button>
         </span>

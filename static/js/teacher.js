@@ -291,7 +291,7 @@
     autoEditing = true;
     $("auto-custom").hidden = false;
     $("auto-custom-input").value = Number(state.auto_next_seconds) || "";
-    if (focus) $("auto-custom-input").focus();
+    if (focus) { $("auto-custom-input").focus(); $("auto-custom-input").select(); }  // сразу печатать поверх
   }
 
   function closeAutoCustom() {
@@ -364,7 +364,7 @@
     editing = true;
     $("custom-timer").hidden = false;
     if (state.timer_seconds) $("timer-custom").value = state.timer_seconds;
-    if (focus) $("timer-custom").focus();
+    if (focus) { $("timer-custom").focus(); $("timer-custom").select(); }  // сразу печатать поверх
   }
 
   function closeCustom() {
