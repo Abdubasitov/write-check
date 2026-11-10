@@ -18,7 +18,7 @@ from django.conf import settings
 from . import services
 
 _timers = {}  # code -> (task, deadline_epoch, round)
-_auto = {}  # code -> (task, at_epoch, round) — отсчёт до авто-нового раунда
+_auto = {}  # code -> (task, at_epoch, round, seconds) — отсчёт до авто-нового раунда
 _held = {}  # code -> round, в котором агай нажал «Подождать»
 
 
@@ -26,7 +26,10 @@ def group_name(code):
     return f"room_{code}"
 
 
-def auto_next_seconds():
+def auto_next_seconds(state=None):
+    """Задержка авто-раунда: из комнаты (меню «Авто-раунд»), иначе settings.AUTO_NEXT_SECONDS."""
+    if state and state.get("auto_next_seconds"):
+        return state["auto_next_seconds"]
     return getattr(settings, "AUTO_NEXT_SECONDS", 3)
 
 
@@ -115,27 +118,29 @@ def hold_auto(code, round_no):
 def sync_auto(code, state):
     """Запускает/отменяет отсчёт по свежему состоянию. Вызывать из event loop.
 
-    Все записали (marked == total > 0) и агай не нажал «Подождать» → отсчёт идёт
-    (уже идущий для этого раунда не перезапускаем). Иначе — отменяем: кто-то нажал
-    «Отменить», вошёл новый ученик, раунд сменился, урок закончился.
+    Авто-раунд включён, все записали (marked == total > 0) и агай не нажал «Подождать» →
+    отсчёт идёт (уже идущий для этого раунда с той же задержкой не перезапускаем). Иначе —
+    отменяем: кто-то нажал «Отменить», вошёл новый ученик, раунд сменился, урок закончился,
+    агай выключил авто-раунд.
     """
     round_no = state["round"]
     if _held.get(code) not in (None, round_no):
         _held.pop(code, None)  # «Подождать» действует только на свой раунд
     want = (
         state["status"] == "active"
+        and state.get("auto_next_enabled", True)
         and state["total"] > 0
         and state["marked"] == state["total"]
         and _held.get(code) != round_no
     )
+    seconds = auto_next_seconds(state)
     entry = _auto.get(code)
     if not want:
         cancel_auto(code)
-    elif not (entry and entry[2] == round_no):
-        cancel_auto(code)
-        seconds = auto_next_seconds()
+    elif not (entry and entry[2] == round_no and entry[3] == seconds):
+        cancel_auto(code)  # агай поменял задержку во время отсчёта — считаем заново
         task = asyncio.get_running_loop().create_task(_auto_run(code, seconds, round_no))
-        _auto[code] = (task, time.time() + seconds, round_no)
+        _auto[code] = (task, time.time() + seconds, round_no, seconds)
     state["auto_next_at"] = auto_next_at(code, round_no) if want else None
     state["auto_held"] = state["status"] == "active" and _held.get(code) == round_no
 

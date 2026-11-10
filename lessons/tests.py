@@ -18,8 +18,12 @@ class TeacherPasswordTests(TestCase):
         self.assertRedirects(r, reverse("teacher", args=[room.code]))
         self.assertTrue(room.code.isdigit() and 4 <= len(room.code) <= 6)
         self.assertEqual(self.client.session["teacher_token"], room.teacher_token)
+        # урок начинается сразу, авто-раунд по умолчанию включён на 3 с
+        self.assertEqual((room.status, room.round), (Room.Status.ACTIVE, 1))
+        self.assertEqual((room.auto_next_enabled, room.auto_next_seconds), (True, 3))
         page = self.client.get(reverse("teacher", args=[room.code]))
         self.assertContains(page, room.code)
+        self.assertNotContains(page, "Начать урок")
 
     def test_wrong_password(self):
         r = self.client.post(self.url, {"password": "nope"})
@@ -81,7 +85,10 @@ class JoinTests(TestCase):
         self.assertRedirects(r, reverse("room", args=[self.room.code]))
         self.assertEqual(Student.objects.get().name, "Айдар")
         page = self.client.get(reverse("room", args=[self.room.code]))
-        self.assertContains(page, "Ждём, когда агай начнёт урок")
+        # урок идёт сразу: никакого «ждём агая», сразу кнопка «Записал»
+        self.assertContains(page, "Записал")
+        self.assertNotContains(page, "Ждём, когда агай")
+        self.assertEqual(page.context["state"]["status"], "active")
 
     def test_name_unique_case_and_spaces(self):
         self.join("Айдар")

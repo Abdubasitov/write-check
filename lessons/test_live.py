@@ -24,14 +24,40 @@ class ServiceTests(TestCase):
         self.a = Student.objects.create(room=self.room, name="Айдар", token="a")
         self.b = Student.objects.create(room=self.room, name="Бек", token="b")
 
-    def test_mark_only_when_active(self):
-        self.assertFalse(services.mark(self.a))
-        services.start(self.room)
+    def test_room_active_right_away_mark_works(self):
+        self.assertEqual(self.room.status, Room.Status.ACTIVE)  # кнопки «Начать урок» больше нет
         self.assertTrue(services.mark(self.a))
         services.mark(self.a)  # повторный клик не ломает
         state = services.room_state(self.room)
         self.assertEqual((state["marked"], state["total"]), (1, 2))
         self.assertEqual(state["status"], "active")
+
+    def test_no_mark_after_finish(self):
+        services.finish(self.room)
+        self.assertFalse(services.mark(self.a))
+
+    def test_old_waiting_room_becomes_active(self):
+        Room.objects.filter(pk=self.room.pk).update(status=Room.Status.WAITING)
+        room = services.open_room(self.room.code)
+        self.assertEqual(room.status, Room.Status.ACTIVE)
+        self.assertEqual(Room.objects.get(pk=self.room.pk).status, Room.Status.ACTIVE)
+        self.assertTrue(services.mark(self.a))
+
+    def test_parse_auto_next(self):
+        self.assertEqual(services.parse_auto_next(True, 5), (True, 5))
+        self.assertEqual(services.parse_auto_next(False, "10"), (False, 10))
+        self.assertEqual(services.parse_auto_next(False, None), (False, None))  # задержку не меняем
+        for enabled, seconds in ((1, 5), ("yes", 5), (None, 5), (True, 0), (True, 61), (True, 2.5),
+                                 (True, "abc"), (True, True), (True, [3])):
+            with self.assertRaises((ValueError, TypeError)):
+                services.parse_auto_next(enabled, seconds)
+
+    def test_auto_next_disabled_keeps_round(self):
+        services.set_auto_next(self.room, False)
+        services.mark(self.a)
+        services.mark(self.b)
+        self.assertIsNone(services.auto_next(self.room.code, 1))
+        self.assertEqual(Room.objects.get(pk=self.room.pk).round, 1)
 
     def test_unmark(self):
         services.start(self.room)
@@ -263,11 +289,23 @@ class ConsumerTests(TransactionTestCase):
         await teacher.disconnect()
         await student.disconnect()
 
-    async def test_mark_before_start_is_error(self):
-        teacher, student, _, _ = await self.connect_both()
+    async def test_student_marks_right_away(self):
+        # урок идёт сразу после создания: без «start» студент отмечается
+        teacher, student, s_state, t_state = await self.connect_both()
+        self.assertEqual((s_state["status"], t_state["status"]), ("active", "active"))
+        await database_sync_to_async(Room.objects.filter(pk=self.room.pk).update)(auto_next_enabled=False)
         await student.send_json_to({"type": "mark"})
-        msg = await student.receive_json_from()
-        self.assertEqual((msg["type"], msg["action"]), ("error", "mark"))
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((t["marked"], t["total"]), (1, 1))
+        self.assertTrue(s["marked"])
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_old_waiting_room_ws_is_active(self):
+        await database_sync_to_async(Room.objects.filter(pk=self.room.pk).update)(status=Room.Status.WAITING)
+        teacher, student, s_state, t_state = await self.connect_both()
+        self.assertEqual((s_state["status"], t_state["status"]), ("active", "active"))
         await teacher.disconnect()
         await student.disconnect()
 
@@ -283,11 +321,11 @@ class ConsumerTests(TransactionTestCase):
 
     async def test_start_reaches_student_and_marks_reach_teacher(self):
         teacher, student, s_state, t_state = await self.connect_both()
-        self.assertEqual(s_state["status"], "waiting")
+        self.assertEqual(s_state["status"], "active")
         self.assertTrue(t_state["students"][0]["online"])
         self.assertNotIn("students", s_state)  # студенту не шлём чужие имена
 
-        await teacher.send_json_to({"type": "start"})
+        await teacher.send_json_to({"type": "start"})  # старая вкладка: событие принимается, ничего не меняет
         self.assertEqual((await student.receive_json_from())["status"], "active")
         await teacher.receive_json_from()
 
@@ -340,14 +378,9 @@ class ConsumerTests(TransactionTestCase):
         teacher, student, _, _ = await self.connect_both()
         await teacher.send_json_to({"type": "set_timer", "seconds": 1})
         t = await teacher.receive_json_from()
-        self.assertEqual(t["timer_seconds"], 1)
-        self.assertIsNone(t["deadline"])  # урок ещё не начат — отсчёта нет
-        await student.receive_json_from()
-
-        await teacher.send_json_to({"type": "start"})
-        t = await teacher.receive_json_from()
         s = await student.receive_json_from()
-        self.assertIsNotNone(t["deadline"])
+        self.assertEqual(t["timer_seconds"], 1)
+        self.assertIsNotNone(t["deadline"])  # урок идёт сразу — таймер действует на текущий раунд
         self.assertEqual(s["deadline"], t["deadline"])  # студент видит тот же отсчёт
 
         self.assertEqual(len(timers._timers), 1)  # один таймер на комнату
@@ -573,6 +606,106 @@ class ConsumerTests(TransactionTestCase):
         await student.receive_json_from()
         self.assertEqual(t["round"], 2)
         self.assertEqual((await self.room_now()).round, 2)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    # --- настройка авто-раунда (set_auto_next) -------------------------------
+
+    async def test_set_auto_next_by_teacher(self):
+        teacher, student, _, t_state = await self.connect_both()
+        self.assertEqual((t_state["auto_next_enabled"], t_state["auto_next_seconds"]), (True, AUTO))
+        await teacher.send_json_to({"type": "set_auto_next", "enabled": False, "seconds": 10})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertEqual((t["auto_next_enabled"], t["auto_next_seconds"]), (False, 10))
+        room = await self.room_now()
+        self.assertEqual((room.auto_next_enabled, room.auto_next_seconds), (False, 10))
+        # без seconds — задержка остаётся
+        await teacher.send_json_to({"type": "set_auto_next", "enabled": True})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertEqual((t["auto_next_enabled"], t["auto_next_seconds"]), (True, 10))
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_student_cannot_set_auto_next(self):
+        teacher, student, _, _ = await self.connect_both()
+        await student.send_json_to({"type": "set_auto_next", "enabled": False, "seconds": 10})
+        msg = await student.receive_json_from()
+        self.assertEqual((msg["type"], msg["action"]), ("error", "set_auto_next"))
+        self.assertTrue(await teacher.receive_nothing())
+        room = await self.room_now()
+        self.assertEqual((room.auto_next_enabled, room.auto_next_seconds), (True, AUTO))
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_bad_auto_next_rejected(self):
+        teacher, student, _, _ = await self.connect_both()
+        for bad in ({"enabled": "yes"}, {"enabled": True, "seconds": 0}, {"enabled": True, "seconds": 61},
+                    {"enabled": True, "seconds": "abc"}, {"enabled": True, "seconds": 2.5}):
+            await teacher.send_json_to({"type": "set_auto_next", **bad})
+            msg = await teacher.receive_json_from()
+            self.assertEqual((msg["type"], msg["action"]), ("error", "set_auto_next"), bad)
+        room = await self.room_now()
+        self.assertEqual((room.auto_next_enabled, room.auto_next_seconds), (True, AUTO))
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_auto_next_disabled_round_stays(self):
+        teacher, student, _, _ = await self.connect_both()
+        await teacher.send_json_to({"type": "set_auto_next", "enabled": False})
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await student.send_json_to({"type": "mark"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((t["marked"], t["total"]), (1, 1))  # все записали…
+        self.assertIsNone(t["auto_next_at"])  # …но отсчёта нет
+        self.assertIsNone(s["auto_next_at"])
+        self.assertTrue(await teacher.receive_nothing(timeout=AUTO + 0.5))
+        self.assertEqual((await self.room_now()).round, 1)
+        self.assertEqual(timers._auto, {})
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_disable_during_countdown_cancels(self):
+        teacher, student, t, _ = await self.started_and_marked()
+        self.assertIsNotNone(t["auto_next_at"])
+        await teacher.send_json_to({"type": "set_auto_next", "enabled": False})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertIsNone(t["auto_next_at"])
+        self.assertTrue(await teacher.receive_nothing(timeout=AUTO + 0.5))
+        self.assertEqual((await self.room_now()).round, 1)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_auto_next_delay_from_room(self):
+        # задержка берётся из комнаты: 5 с в отсчёте; ждём по-настоящему маленькое значение
+        teacher, student, _, _ = await self.connect_both()
+        await teacher.send_json_to({"type": "set_auto_next", "enabled": True, "seconds": 5})
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await student.send_json_to({"type": "mark"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertAlmostEqual(t["auto_next_at"] - t["now"], 5, delta=0.2)
+        self.assertEqual(s["auto_next_at"], t["auto_next_at"])
+        timers.cancel_auto(self.room.code)  # 5 с не ждём — проверим соблюдение на 0.6 с
+
+        delay = 0.6
+        await database_sync_to_async(Room.objects.filter(pk=self.room.pk).update)(auto_next_seconds=delay)
+        await student.send_json_to({"type": "unmark"})
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await student.send_json_to({"type": "mark"})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        self.assertAlmostEqual(t["auto_next_at"] - t["now"], delay, delta=0.15)
+        self.assertTrue(await teacher.receive_nothing(timeout=delay - 0.25))  # раньше срока — ничего
+        self.assertEqual((await self.room_now()).round, 1)
+        t = await teacher.receive_json_from(timeout=1)
+        self.assertEqual(t["round"], 2)
         await teacher.disconnect()
         await student.disconnect()
 

@@ -4,21 +4,19 @@
 
   var state = JSON.parse(document.getElementById("initial-state").textContent);
   var $ = function (id) { return document.getElementById(id); };
-  var STATUS_TEXT = { waiting: "Ждём начала", active: "Урок идёт", finished: "Урок завершён" };
+  // урок начинается сразу; waiting — только у старых комнат, сервер переводит их в active
+  var STATUS_TEXT = { waiting: "Урок идёт", active: "Урок идёт", finished: "Урок завершён" };
 
   var OFFLINE_NOTE = "вкладка закрыта";  // только для скринридера и подсказки — имя важнее
 
-  // Группы списка. До старта — одна «Вошли». Во время урока — «Ждём» сверху
-  // (сначала те, у кого вкладка открыта) и «Записали» ниже. Порядок внутри — как входили.
+  // Группы списка: «Ждём» сверху (сначала те, у кого вкладка открыта) и «Записали» ниже.
+  // Порядок внутри — как входили.
   function onlineFirst(list) {
     return list.filter(function (s) { return s.online; }).concat(list.filter(function (s) { return !s.online; }));
   }
 
-  function groupsFor(active) {
+  function groupsFor() {
     var all = state.students;
-    if (!active) {
-      return [{ key: "in", title: "Вошли", items: onlineFirst(all), empty: { text: "Пока никого. Продиктуйте код классу." } }];
-    }
     return [
       { key: "wait", title: "Ждём", items: onlineFirst(all.filter(function (s) { return !s.marked; })),
         empty: all.length
@@ -168,8 +166,37 @@
     if (!initial && soundOn) play(variant);
   }
 
+  // --- меню-popover в верхней полосе («Звук», «Авто-раунд») -----------------
+  // Клик по кнопке — открыть/закрыть; Esc — закрыть и вернуть фокус; клик вне — закрыть.
+  // focusTarget() — куда ставить фокус при открытии. Открыто не больше одного меню.
+  var menus = [];
+  function popMenu(rootId, btnId, popId, focusTarget) {
+    var m = { root: $(rootId), btn: $(btnId), pop: $(popId) };
+    m.set = function (open, focusBack) {
+      if (open) menus.forEach(function (o) { if (o !== m && !o.pop.hidden) o.set(false); });
+      m.pop.hidden = !open;
+      m.btn.setAttribute("aria-expanded", String(open));
+      if (open) focusTarget().focus();
+      else if (focusBack) m.btn.focus();
+    };
+    m.btn.addEventListener("click", function () { m.set(m.pop.hidden); });
+    menus.push(m);
+    return m;
+  }
+  document.addEventListener("pointerdown", function (e) {
+    menus.forEach(function (m) { if (!m.pop.hidden && !m.root.contains(e.target)) m.set(false); });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    menus.forEach(function (m) {
+      // Esc в поле «Своё» сначала сворачивает поле (см. ниже), меню остаётся
+      if (!m.pop.hidden && !e.defaultPrevented) m.set(false, true);
+    });
+  });
+  function checkedOf(radios) { return radios.filter(function (r) { return r.checked; })[0]; }
+
   // --- меню звука: вкл/выкл, вариант, «Проверить» ---------------------------
-  var soundMenu = $("sound-menu"), soundBtn = $("sound-toggle"), soundPop = $("sound-pop");
+  var soundBtn = $("sound-toggle");
   var variantRadios = [].slice.call(document.querySelectorAll('input[name="sound-variant"]'));
 
   function renderSound() {
@@ -181,19 +208,8 @@
     variantRadios.forEach(function (r) { r.checked = r.value === variant; });
   }
 
-  function setMenu(open, focusBack) {
-    soundPop.hidden = !open;
-    soundBtn.setAttribute("aria-expanded", String(open));
-    if (open) (variantRadios.filter(function (r) { return r.checked; })[0] || $("sound-on")).focus();
-    else if (focusBack) soundBtn.focus();
-  }
-
-  soundBtn.addEventListener("click", function () { setMenu(soundPop.hidden); });
-  document.addEventListener("pointerdown", function (e) {
-    if (!soundPop.hidden && !soundMenu.contains(e.target)) setMenu(false);
-  });
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && !soundPop.hidden) { setMenu(false, true); }
+  popMenu("sound-menu", "sound-toggle", "sound-pop", function () {
+    return checkedOf(variantRadios) || $("sound-on");
   });
   $("sound-on").addEventListener("change", function () {
     soundOn = this.checked;
@@ -211,6 +227,97 @@
     // клик сам по себе разрешает звук; ждём resume, чтобы первая проверка тоже прозвучала
     unlockAudio().then(function () { play(variant); }, function () {});
   });
+
+  // --- меню «Авто-раунд»: настройка хранится в комнате на сервере -----------
+  var autoBtn = $("auto-toggle");
+  var delayRadios = [].slice.call(document.querySelectorAll('input[name="auto-delay"]'));
+  var DELAY_PRESETS = ["3", "5", "10"];
+  var autoEditing = false;   // агай вводит «Своё» — выбор не трогаем
+  var autoByPointer = false; // «Своё» мышью — сразу фокус в поле; стрелками — не уводим фокус
+
+  function fmtSec(v) { return String(Number(v)) + " с"; }
+
+  function renderAuto() {
+    var on = !!state.auto_next_enabled, sec = state.auto_next_seconds;
+    $("auto-toggle-label").textContent = on ? "Авто-раунд · " + fmtSec(sec) : "Авто-раунд выкл";
+    autoBtn.classList.toggle("is-off", !on);
+    autoBtn.title = on
+      ? "Все записали → новый раунд через " + fmtSec(sec)
+      : "Авто-раунд выключен: когда все записали, нажмите «Сбросить» сами";
+    $("auto-on").checked = on;
+    $("auto-delays").classList.toggle("is-off", !on);
+    var v = String(Number(sec)), custom = DELAY_PRESETS.indexOf(v) === -1;
+    $("auto-custom-label").textContent = custom ? "Своё · " + fmtSec(sec) : "Своё";
+    if (autoEditing) return;
+    delayRadios.forEach(function (r) { r.checked = r.value === (custom ? "custom" : v); });
+    $("auto-custom").hidden = true;
+  }
+
+  function sendAuto(extra) {
+    conn.send("set_auto_next", Object.assign({ enabled: !!state.auto_next_enabled }, extra));
+  }
+
+  function openAutoCustom(focus) {
+    autoEditing = true;
+    $("auto-custom").hidden = false;
+    $("auto-custom-input").value = Number(state.auto_next_seconds) || "";
+    if (focus) $("auto-custom-input").focus();
+  }
+
+  function closeAutoCustom() {
+    autoEditing = false;
+    $("auto-custom").hidden = true;
+    renderAuto();
+  }
+
+  popMenu("auto-menu", "auto-toggle", "auto-pop", function () {
+    return checkedOf(delayRadios) || $("auto-on");
+  });
+  $("auto-on").addEventListener("change", function () {
+    sendAuto({ enabled: this.checked });  // задержку не трогаем
+  });
+  $("auto-delays").addEventListener("pointerdown", function () { autoByPointer = true; });
+  // «Своё» уже выбрано — change не придёт, раскрываем по клику на подпись
+  $("auto-delay-custom").parentNode.addEventListener("click", function () {
+    if ($("auto-delay-custom").checked && !autoEditing) openAutoCustom(true);
+  });
+  delayRadios.forEach(function (r) {
+    r.addEventListener("change", function () {
+      if (!r.checked) return;
+      var pointer = autoByPointer;
+      autoByPointer = false;
+      if (r.value === "custom") { openAutoCustom(pointer); return; }
+      autoEditing = false;
+      $("auto-custom").hidden = true;
+      sendAuto({ seconds: Number(r.value) });
+    });
+  });
+  function applyAutoCustom() {
+    var input = $("auto-custom-input");
+    if (!input.value || !input.checkValidity()) { input.reportValidity(); return; }
+    sendAuto({ seconds: Number(input.value) });
+    autoEditing = false;
+    $("auto-custom").hidden = true;  // значение покажет подпись «Своё · N с», когда придёт state
+    $("auto-delay-custom").focus();
+  }
+  $("auto-custom-apply").addEventListener("click", applyAutoCustom);
+  $("auto-custom-input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") applyAutoCustom();
+    else if (e.key === "Escape") { e.preventDefault(); closeAutoCustom(); $("auto-delay-custom").focus(); }
+  });
+
+  // --- скрыть / показать код: помним по коду комнаты ------------------------
+  var CODE_KEY = "zap_code_hidden_" + state.code;
+
+  function setCodeHidden(hidden) {
+    $("code-banner").hidden = hidden;
+    $("teacher-top").classList.toggle("code-hidden", hidden);
+    $("code-chip").hidden = !hidden;
+    save(CODE_KEY, hidden ? "1" : "0");
+  }
+  $("btn-hide-code").addEventListener("click", function () { setCodeHidden(true); $("code-chip").focus(); });
+  $("code-chip").addEventListener("click", function () { setCodeHidden(false); $("btn-hide-code").focus(); });
+  setCodeHidden(load(CODE_KEY, "0") === "1");  // по умолчанию показан — код нужно продиктовать
 
   // --- таймер автосброса ---------------------------------------------------
   var updateCountdown = Realtime.countdown($("countdown"));
@@ -276,7 +383,7 @@
     else if (e.key === "Escape") { closeCustom(); $("timer-custom-radio").focus(); }
   });
 
-  // --- авто-новый раунд: все записали → сервер сам начнёт новый через 3 с ----
+  // --- авто-новый раунд: все записали → сервер сам начнёт новый через N с ----
   var updateAuto = Realtime.countdown($("auto-next"), "", {
     field: "auto_next_at",
     format: function (s) { return s + "…"; },
@@ -286,11 +393,14 @@
 
   function render() {
     var active = state.status === "active";
+    var done = allDone();
     renderTimer();
+    renderAuto();
     // пока идёт отсчёт авто-раунда, строку автосброса не показываем — один отсчёт за раз
     updateCountdown(state.auto_next_at ? { now: state.now } : state);
     updateAuto(state);
-    $("auto-held").hidden = !(state.auto_held && allDone());
+    $("all-done").hidden = !(done && !state.auto_next_enabled);  // авто-раунд выкл — сбрасывает агай
+    $("auto-held").hidden = !(state.auto_held && done && state.auto_next_enabled);
 
     $("marked").textContent = state.marked;
     $("total").textContent = state.total;
@@ -302,7 +412,6 @@
     $("progress-fill").style.width = pct + "%";
     $("progress").setAttribute("aria-valuemax", state.total);
     $("progress").setAttribute("aria-valuenow", state.marked);
-    $("btn-start").hidden = state.status !== "waiting";
     $("btn-reset").hidden = !active;
 
     renderRoster(active);
@@ -343,7 +452,7 @@
   // --- мини-окно агая: счётчик, прогресс, короткий список, «Сбросить» -------
   var mini = null;  // {doc, el}
 
-  // В окошке — только первая группа: до старта «Вошли», во время урока «Ждём».
+  // В окошке — только первая группа «Ждём»; отсчёт авто-раунда — тот же, что в панели.
   function renderMini(active) {
     if (!mini) return;
     var e = mini.el, doc = mini.doc;
@@ -418,7 +527,6 @@
     },
   });
 
-  $("btn-start").addEventListener("click", function () { conn.send("start"); });
   // шлём раунд, который видим: если сервер уже начал новый (таймер/авто-раунд), второго сброса не будет
   function resetRound() { conn.send("reset", { round: state.round }); }
   $("btn-reset").addEventListener("click", resetRound);

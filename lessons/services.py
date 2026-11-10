@@ -11,6 +11,7 @@ from .models import Mark, Room, Student
 ROOM_TTL = timedelta(hours=12)  # старше — комнаты как будто нет
 ONLINE_WINDOW = timedelta(seconds=40)  # «в сети» = был ping за последние 40 с (ping раз в 15 с)
 TIMER_MIN, TIMER_MAX = 1, 60 * 60
+AUTO_NEXT_MIN, AUTO_NEXT_MAX = 1, 60  # задержка авто-раунда, с
 
 
 class NameTaken(Exception):
@@ -54,10 +55,16 @@ def create_room():
 
 
 def open_room(code):
-    """Комната, в которую ещё можно войти, или None."""
+    """Комната, в которую ещё можно войти, или None.
+
+    Урок начинается сразу: комнаты, созданные до этого в статусе waiting, становятся active.
+    """
     if not code or not code.isdigit():
         return None
-    return live_rooms().filter(code=code).first()
+    room = live_rooms().filter(code=code).first()
+    if room is not None and room.status == Room.Status.WAITING:
+        start(room)
+    return room
 
 
 def join_room(room, name, token):
@@ -92,6 +99,8 @@ def room_state(room):
         "status": room.status,
         "round": room.round,
         "timer_seconds": room.timer_seconds,
+        "auto_next_enabled": room.auto_next_enabled,
+        "auto_next_seconds": room.auto_next_seconds,
         "students": [
             {"id": s.id, "name": s.name, "online": is_online(s, fresh_after), "marked": s.id in marked_ids}
             for s in students
@@ -116,6 +125,7 @@ def student_view(state, student_id):
 
 
 def start(room):
+    """Совместимость: раньше урок начинали кнопкой. Теперь комната сразу active."""
     if room.status == Room.Status.WAITING:
         room.status = Room.Status.ACTIVE
         room.save(update_fields=["status"])
@@ -172,9 +182,9 @@ def all_marked(room):
 
 
 def auto_next(code, expected_round):
-    """Авто-новый раунд: только если урок идёт, раунд тот же и по-прежнему записали все."""
+    """Авто-новый раунд: только если урок идёт, он включён, раунд тот же и по-прежнему записали все."""
     room = live_rooms().filter(code=code, status=Room.Status.ACTIVE, round=expected_round).first()
-    if room is None or not all_marked(room):
+    if room is None or not room.auto_next_enabled or not all_marked(room):
         return None
     return reset(room, expected_round)
 
@@ -192,6 +202,29 @@ def parse_timer(value):
 def set_timer(room, seconds):
     room.timer_seconds = seconds
     room.save(update_fields=["timer_seconds"])
+
+
+def parse_auto_next(enabled, seconds):
+    """Настройка авто-раунда от агая: enabled — bool, seconds — целое 1–60 (или None — не менять)."""
+    if not isinstance(enabled, bool):
+        raise ValueError(enabled)
+    if seconds is None:
+        return enabled, None
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float, str)):
+        raise ValueError(seconds)
+    value = float(seconds)
+    if value != int(value) or not AUTO_NEXT_MIN <= value <= AUTO_NEXT_MAX:
+        raise ValueError(seconds)
+    return enabled, int(value)
+
+
+def set_auto_next(room, enabled, seconds=None):
+    room.auto_next_enabled = enabled
+    fields = ["auto_next_enabled"]
+    if seconds is not None:
+        room.auto_next_seconds = seconds
+        fields.append("auto_next_seconds")
+    room.save(update_fields=fields)
 
 
 def kick(room, student_id):

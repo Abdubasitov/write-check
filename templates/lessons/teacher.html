@@ -6,10 +6,14 @@
 {% block content %}
   {# 1. Верхняя панель: статус слева, второстепенные действия справа #}
   <header class="topbar">
-    <span class="status-chip" id="status-chip" data-status="{{ state.status }}">
-      <span class="status-dot" aria-hidden="true"></span>
-      <span id="status-text"></span><span id="round-part" hidden><span class="sep" aria-hidden="true">·</span> Раунд <span id="round">{{ state.round }}</span></span>
-    </span>
+    <div class="topbar-status">
+      <span class="status-chip" id="status-chip" data-status="{{ state.status }}">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text"></span><span id="round-part" hidden><span class="sep" aria-hidden="true">·</span> Раунд <span id="round">{{ state.round }}</span></span>
+      </span>
+      {# код скрыт → компактный чип; клик снова показывает большую карточку #}
+      <button type="button" class="code-chip" id="code-chip" hidden title="Показать код крупно">{% icon "eye" %}<span>Код <b>{{ room.code }}</b></span></button>
+    </div>
     <div class="topbar-actions">
       {# звук «записали все»: меню — вкл/выкл, вариант сигнала, «Проверить» #}
       <div class="sound-menu" id="sound-menu">
@@ -30,6 +34,30 @@
           <button type="button" class="btn btn-sm sound-test" id="sound-test">{% icon "play" %}Проверить</button>
         </div>
       </div>
+      {# авто-раунд: настройка хранится на сервере в комнате (set_auto_next) #}
+      <div class="sound-menu" id="auto-menu">
+        <button type="button" class="btn btn-ghost btn-sm" id="auto-toggle" aria-haspopup="dialog" aria-expanded="false"
+                aria-controls="auto-pop" title="Новый раунд, когда записали все">{% icon "fast-forward" %}<span id="auto-toggle-label">Авто-раунд</span></button>
+        <div class="sound-pop" id="auto-pop" role="dialog" aria-label="Авто-раунд" hidden>
+          <label class="sound-switch">
+            <input type="checkbox" id="auto-on" role="switch">
+            <span class="sound-switch-track" aria-hidden="true"></span>
+            <span>Новый раунд, когда записали все</span>
+          </label>
+          <fieldset class="sound-variants" id="auto-delays">
+            <legend>Через сколько</legend>
+            <label><input type="radio" name="auto-delay" value="3"><span>3 с</span></label>
+            <label><input type="radio" name="auto-delay" value="5"><span>5 с</span></label>
+            <label><input type="radio" name="auto-delay" value="10"><span>10 с</span></label>
+            <label><input type="radio" name="auto-delay" value="custom" id="auto-delay-custom"><span id="auto-custom-label">Своё</span></label>
+            <span class="custom-timer auto-custom" id="auto-custom" hidden>
+              <input type="number" id="auto-custom-input" class="input-sm" min="1" max="60" step="1" aria-label="Секунд до нового раунда">
+              <span class="muted">с</span>
+              <button type="button" class="btn btn-sm btn-primary" id="auto-custom-apply">Ок</button>
+            </span>
+          </fieldset>
+        </div>
+      </div>
       <button type="button" class="btn btn-ghost btn-sm" id="btn-mini" aria-pressed="false" data-pip-only data-css="{% static 'css/mini.css' %}"
               title="Маленькое окно поверх VS Code и презентации">{% icon "picture-in-picture-2" %}<span>Мини-окно</span></button>
       {% include "lessons/partials/theme_toggle.html" with ghost=True %}
@@ -38,10 +66,11 @@
     </div>
   </header>
 
-  <div class="teacher-top">
-    <section class="code-banner">
+  <div class="teacher-top" id="teacher-top">
+    <section class="code-banner" id="code-banner">
       <span class="code-label">Код урока</span>
       <span class="room-code room-code-{{ room.code|length }}">{{ room.code }}</span>
+      <button type="button" class="btn btn-ghost btn-sm code-hide" id="btn-hide-code">{% icon "eye-off" %}Скрыть код</button>
     </section>
 
     {# 2. Счётчик: только главное и одна главная кнопка #}
@@ -55,13 +84,17 @@
       </div>
 
       <div class="main-action">
-        {# все записали → сервер сам начнёт новый раунд через 3 с; «Подождать» отменяет на этот раунд #}
+        {# все записали → сервер сам начнёт новый раунд через N с; «Подождать» отменяет на этот раунд #}
         <div class="auto-next" id="auto-next" data-prefix="Новый раунд через " role="status" hidden>
           <p class="auto-next-text">{% icon "check-check" %}<span><b>Все записали!</b> <span class="cd-text"></span></span></p>
           <button type="button" class="btn btn-sm auto-next-hold" id="btn-hold">{% icon "pause" %}Подождать</button>
         </div>
+        {# авто-раунд выключен → только сообщение, раунд сбрасывает агай #}
+        <div class="auto-next" id="all-done" role="status" hidden>
+          <p class="auto-next-text">{% icon "check-check" %}<span><b>Все записали</b></span></p>
+          <span class="auto-next-hint">Нажмите «Сбросить»</span>
+        </div>
         <p class="countdown-line" id="auto-held" hidden>{% icon "pause" %}Авто-раунд отложен — нажмите «Сбросить», когда будете готовы</p>
-        <button type="button" class="btn btn-primary btn-big" id="btn-start" hidden>{% icon "play" %}Начать урок</button>
         <button type="button" class="btn btn-primary btn-big" id="btn-reset" hidden>{% icon "rotate-ccw" %}Сбросить</button>
         <p class="countdown-line" id="countdown" data-prefix="Автосброс через " aria-live="off" hidden>{% icon "timer" %}<span class="cd-text"></span></p>
       </div>
@@ -86,6 +119,9 @@
       <p class="conn" id="conn" hidden>{% icon "wifi-off" %}Нет связи с сервером, переподключаемся…</p>
     </section>
   </div>
+
+  {# скрытый код применяем до отрисовки, чтобы после F5 карточка не мелькала (teacher.js делает то же) #}
+  <script>try{if(localStorage.getItem("zap_code_hidden_{{ room.code|escapejs }}")==="1"){document.getElementById("code-banner").hidden=true;document.getElementById("teacher-top").classList.add("code-hidden");document.getElementById("code-chip").hidden=false;}}catch(e){}</script>
 
   <section class="card">
     <h2 class="section-title">{% icon "users" %}Ученики</h2>

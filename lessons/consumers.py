@@ -18,7 +18,8 @@ CLOSE_FINISHED = 4000
 CLOSE_KICKED = 4001
 CLOSE_DENIED = 4003
 
-TEACHER_ACTIONS = {"start", "reset", "kick", "finish", "set_timer", "hold_auto"}
+# start — только для совместимости со старыми вкладками: урок теперь начинается сразу
+TEACHER_ACTIONS = {"start", "reset", "kick", "finish", "set_timer", "hold_auto", "set_auto_next"}
 STUDENT_ACTIONS = {"mark", "unmark"}
 TIMER_ACTIONS = {"start", "reset", "set_timer"}
 
@@ -148,6 +149,12 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
                 except (TypeError, ValueError):
                     return "bad"
                 services.set_timer(room, seconds)
+            elif action == "set_auto_next":
+                try:
+                    enabled, seconds = services.parse_auto_next(content.get("enabled"), content.get("seconds"))
+                except (TypeError, ValueError, OverflowError):
+                    return "bad"
+                services.set_auto_next(room, enabled, seconds)
             elif action == "kick":
                 try:
                     sid = int(content.get("student_id"))

@@ -1,17 +1,26 @@
+from django.conf import settings
 from django.db import models
+
+
+def default_auto_next_seconds():
+    """Задержка авто-раунда новой комнаты: settings.AUTO_NEXT_SECONDS (в тестах — доли секунды)."""
+    return getattr(settings, "AUTO_NEXT_SECONDS", 3)
 
 
 class Room(models.Model):
     class Status(models.TextChoices):
-        WAITING = "waiting", "Ожидание"
+        WAITING = "waiting", "Ожидание"  # устарело: урок начинается сразу, старые комнаты → active
         ACTIVE = "active", "Идёт урок"
         FINISHED = "finished", "Завершён"
 
     code = models.CharField("код", max_length=6, unique=True)
     teacher_token = models.CharField(max_length=64)
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.WAITING)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
     round = models.PositiveIntegerField("раунд", default=1)
     timer_seconds = models.PositiveIntegerField(null=True, blank=True)  # null = без таймера
+    # все записали → новый раунд через N с (агай меняет в меню «Авто-раунд»; из панели — целые 1–60)
+    auto_next_enabled = models.BooleanField(default=True)
+    auto_next_seconds = models.FloatField(default=default_auto_next_seconds)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

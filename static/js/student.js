@@ -1,4 +1,4 @@
-// Страница студента: ожидание → кнопка «Записал» (+ мини-окно поверх всех окон).
+// Страница студента: сразу кнопка «Записал» (+ мини-окно поверх всех окон).
 // «Отмечено» показываем только после подтверждения сервером — никаких тихих оптимистичных отметок.
 (function () {
   "use strict";
@@ -61,7 +61,7 @@
     if (msg.action !== "mark" && msg.action !== "unmark") return;
     clearPending();
     errorText = msg.action === "mark"
-      ? "Не получилось отметить: урок ещё не начат или уже закончился."
+      ? "Не получилось отметить: урок уже закончился."
       : "Не получилось отменить отметку.";
     render();
   }
@@ -79,7 +79,6 @@
     $("round-chip").hidden = !active;  // до старта раунд не показываем
     updateCountdown(active && !state.auto_next_at ? state : {});
     updateAuto(active ? state : {});
-    $("view-waiting").hidden = pipOpen || state.status !== "waiting";
     $("view-active").hidden = pipOpen || !active;
     $("view-pip").hidden = !pipOpen;
 
@@ -100,7 +99,6 @@
     if (!mini) return;
     var e = mini.el;
     e.round.textContent = state.round;
-    e.waiting.hidden = active;
     e.mark.hidden = !active || state.marked;
     e.mark.disabled = !!marking;
     e["mark-label"].textContent = marking ? "Отмечаю…" : "Записал";
@@ -145,7 +143,6 @@
     Pip.close();
     updateCountdown({});
     updateAuto({});
-    $("view-waiting").hidden = true;
     $("view-active").hidden = true;
     $("view-pip").hidden = true;
     $("round-chip").hidden = true;
