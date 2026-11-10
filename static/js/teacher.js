@@ -35,15 +35,41 @@
       return "ждёт " + mmss(Math.max(0, Math.floor((serverNow() - s.question_at * 1000) / 1000)));
     }
     if (s.group === "done" && s.marked_after != null) return mmss(s.marked_after);
-    if (s.group === "away" && s.away_since) {
+    if (s.group === "away" && s.away_since) {  // «Вышел» уже в пилюле — здесь только давность
       var min = Math.floor((serverNow() - s.away_since * 1000) / 60000);
-      return min < 1 ? "вышел только что" : "вышел " + min + " мин назад";
+      return min < 1 ? "только что" : min + " мин назад";
     }
     return "";
   }
 
   function whenTitle(s) {
-    return s.group === "done" ? "Записал через " + whenText(s) + " после начала раунда" : "";
+    if (s.group === "done") return "Записал через " + whenText(s) + " после начала раунда";
+    if (s.group === "away") return "Вышел " + whenText(s);
+    if (s.group === "question") return "Ждёт ответа " + whenText(s).replace("ждёт ", "");
+    return "";
+  }
+
+  // Аватар: 2 буквы (фамилия + имя), спокойный цвет детерминированно из имени
+  function initials(name) {
+    var parts = name.trim().split(/\s+/);
+    return ((parts[0] || "").charAt(0) + (parts[1] || "").charAt(0)).toUpperCase() || "?";
+  }
+  var AVATAR_HUES = [210, 160, 30, 280, 340, 190, 100, 250];
+  function avatarHue(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return AVATAR_HUES[h % AVATAR_HUES.length];
+  }
+
+  // Пилюля статуса: иконка + текст на цветном фоне. small — вторая, «Внимание»
+  function pill(kind, icon, text, small, title) {
+    var p = document.createElement("span");
+    p.className = "pill pill-" + kind + (small ? " pill-sm" : "");
+    if (title) p.title = title;
+    var t = document.createElement("span");
+    t.textContent = text;
+    p.append(Realtime.icon(icon), t);
+    return p;
   }
 
   // Чип ученика для мини-окна. doc — документ мини-окна.
@@ -85,33 +111,42 @@
     return p;
   }
 
-  // Строка таблицы: имя | статус | когда | крестик (виден при наведении/фокусе, место зарезервировано)
-  // «Внимание»: у присутствующих статус показывает, нажал ли «Я слушаю»
+  // Строка таблицы: [аватар + имя] | пилюля статуса (+ пилюля «Внимания») | когда | «Ответил» ×
+  // Крестик виден при наведении/фокусе, место под него зарезервировано.
   var ATTENTION_STATUS = {
-    yes: { icon: "ear", text: "Слушает" },
-    no: { icon: "triangle-alert", text: "Не ответил на «Внимание»" },
+    yes: { kind: "att-yes", icon: "ear", text: "Слушает" },
+    no: { kind: "att-no", icon: "triangle-alert", text: "Не ответил", title: "Не ответил на «Внимание»" },
   };
 
   function fillRow(row, s) {
     var st = s.group === "question" ? QUESTION[s.question] || QUESTION.question : STATUS[s.group] || STATUS.wait;
+    var kind = s.group === "question" ? (s.question === "bug" ? "bug" : "question") : s.group;
     var att = state.attention && s.group !== "away" ? (s.attention_ack ? "yes" : "no") : null;
-    if (att) st = ATTENTION_STATUS[att];
     row.className = "roster-row r-" + s.group + (att ? " att-" + att : "");
     row.textContent = "";
 
     var name = document.createElement("span");
     name.className = "r-name";
     name.setAttribute("role", "cell");
-    name.title = s.name;
-    name.textContent = s.name;
+    var av = document.createElement("span");
+    av.className = "avatar";
+    av.setAttribute("aria-hidden", "true");
+    av.style.setProperty("--h", avatarHue(s.name));
+    av.textContent = initials(s.name);
+    var nm = document.createElement("span");
+    nm.className = "r-name-text";
+    nm.title = s.name;
+    nm.textContent = s.name;
+    name.append(av, nm);
 
     var status = document.createElement("span");
     status.className = "r-status";
     status.setAttribute("role", "cell");
-    if (st.title) status.title = st.title;
-    var label = document.createElement("span");
-    label.textContent = st.text;
-    status.append(Realtime.icon(st.icon), label);
+    status.append(pill(kind, st.icon, st.text, false, st.title));
+    if (att) {  // во время «Внимания» основной статус остаётся, рядом — маленькая вторая пилюля
+      var a = ATTENTION_STATUS[att];
+      status.append(pill(a.kind, a.icon, a.text, true, a.title || "«Внимание»: " + a.text));
+    }
 
     var when = document.createElement("span");
     when.className = "r-when";
@@ -121,6 +156,10 @@
     whenSpan.textContent = whenText(s);
     when.append(whenSpan);
     when.title = whenTitle(s);
+
+    var cell = document.createElement("span");
+    cell.className = "r-actions";
+    cell.setAttribute("role", "cell");
     if (s.group === "question") {  // «Ответил» — видна всегда у строк с вопросом
       var ans = document.createElement("button");
       ans.type = "button";
@@ -128,12 +167,8 @@
       ans.setAttribute("aria-label", "Ответил: " + s.name);
       ans.append(Realtime.icon("check"), document.createTextNode("Ответил"));
       ans.addEventListener("click", function () { conn.send("answer", { student_id: s.id }); });
-      when.append(ans);
+      cell.append(ans);
     }
-
-    var cell = document.createElement("span");
-    cell.className = "r-kick";
-    cell.setAttribute("role", "cell");
     var x = document.createElement("button");
     x.type = "button";
     x.className = "st-kick";

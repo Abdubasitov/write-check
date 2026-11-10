@@ -79,6 +79,8 @@
       <span class="divider" aria-hidden="true"></span>
       {# «Внимание»: у всех студентов красный экран «посмотрите на доску»; пока включено — «Продолжить урок» #}
       <button type="button" class="btn btn-sm btn-attention" id="btn-attention" aria-pressed="false">{% icon "megaphone" %}<span>Внимание</span></button>
+      {# «Завершить урок» отделён разделителем, чтобы не нажать вместо «Внимание» #}
+      <span class="divider divider-finish" aria-hidden="true"></span>
       <button type="button" class="btn btn-ghost btn-sm btn-ghost-danger" id="btn-finish" title="Завершить урок">{% icon "square" %}<span>Завершить урок</span></button>
     </div>
   </header>
@@ -154,10 +156,10 @@
     {# строки отсортированы сервером: ждём → вкладка закрыта → вышел → записал, внутри по алфавиту #}
     <div class="roster-table" role="table" aria-label="Ученики">
       <div class="roster-row roster-header" role="row">
-        <span role="columnheader">Фамилия Имя</span>
+        <span role="columnheader">Ученик</span>
         <span role="columnheader">Статус</span>
-        <span role="columnheader">Когда</span>
-        <span role="columnheader"><span class="sr-only">Удалить</span></span>
+        <span role="columnheader" class="r-when-head">Когда</span>
+        <span role="columnheader"><span class="sr-only">Действия</span></span>
       </div>
       <div id="roster" role="rowgroup"></div>
     </div>
