@@ -1,0 +1,6 @@
+{% load icons %}{# Переключатель темы. Видимая половина — по data-theme на <html> (CSS), aria — theme.js #}
+<button type="button" class="btn btn-sm theme-toggle{% if ghost %} btn-ghost{% endif %}" data-theme-toggle
+        aria-pressed="false" aria-label="Включить светлую тему" title="Включить светлую тему">
+  <span class="theme-to-light">{% icon "sun" %}<span>Светлая</span></span>
+  <span class="theme-to-dark">{% icon "moon" %}<span>Тёмная</span></span>
+</button>

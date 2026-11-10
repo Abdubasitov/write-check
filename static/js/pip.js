@@ -5,6 +5,19 @@
 
   var supported = "documentPictureInPicture" in window;
   var current = null;
+  var BG = { dark: "#141513", light: "#f4f3ee" };  // = --bg; фон до загрузки mini.css, без вспышки
+
+  // Тема окна = тема страницы (data-theme на <html>)
+  function pageTheme() { return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark"; }
+  function applyTheme(doc) {
+    var theme = pageTheme();
+    doc.documentElement.setAttribute("data-theme", theme);
+    doc.documentElement.style.background = BG[theme];
+    var meta = doc.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.content = theme;
+  }
+  // переключили тему при открытом окне — меняем и в нём
+  window.addEventListener("zap:theme", function () { if (current) applyTheme(current.document); });
 
   // Открывать только из обработчика клика — иначе браузер откажет.
   // opts: {templateId, cssHref, width, height, onOpen(doc), onClose()}
@@ -18,9 +31,8 @@
         doc.title = document.title;
         var meta = doc.createElement("meta");
         meta.name = "color-scheme";
-        meta.content = "dark";  // только тёмная тема
-        doc.documentElement.style.background = "#141513";  // без белой вспышки до загрузки mini.css
         doc.head.append(meta);
+        applyTheme(doc);
         var link = doc.createElement("link");
         link.rel = "stylesheet";
         link.href = new URL(opts.cssHref, location.href).href;

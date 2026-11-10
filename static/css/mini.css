@@ -1,5 +1,5 @@
 /* Мини-окна (Document Picture-in-Picture). Своя копия токенов — окно не видит style.css. */
-/* Только тёмная тема, те же значения, что в style.css */
+/* Тема — data-theme на <html> окна (ставит pip.js по теме страницы); те же значения, что в style.css */
 :root {
   color-scheme: dark;
   --bg: #141513;
@@ -19,6 +19,26 @@
   --off-text: #a8a7a0;
   --off-dot: #6a6c63;
 }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f3ee;
+  --surface: #ffffff;
+  --text: #1a1b18;
+  --muted: #4d4f47;
+  --border: #a9aba1;
+  --accent: #1b7a4b;
+  --accent-text: #ffffff;
+  --done-bg: #ddf2e5;
+  --done-text: #0c4429;
+  --done-dot: #1b7a4b;
+  --wait-bg: #fde4e0;
+  --wait-text: #86190f;
+  --wait-dot: #d1352a;
+  --off-bg: #e6e5de;
+  --off-text: #4d4f47;
+  --off-dot: #7d7f76;
+}
+:root[data-theme="light"] .mini-mark:hover { filter: brightness(1.12); }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }

@@ -1,7 +1,10 @@
-/* Только тёмная тема — при любой системной. На проекторе тёмное теряет контраст,
-   поэтому приглушённый текст и рамки светлее «обычной» тёмной темы. */
+/* Две темы: тёмная по умолчанию, светлая — кнопкой вверху (data-theme на <html>,
+   ставится inline-скриптом в <head> до отрисовки). Обе рассчитаны на проектор:
+   любой текст, включая приглушённый, — контраст не ниже 4.5:1.
+   Те же значения — в mini.css (мини-окно не видит этот файл). */
 :root {
   color-scheme: dark;  /* поля ввода, скроллбары и прочие системные элементы — тоже тёмные */
+  --shadow: rgba(0, 0, 0, .5);
   --bg: #141513;
   --surface: #1e201d;
   --text: #f0efea;
@@ -23,6 +26,44 @@
   --off-border: #6a6c63;
   --off-text: #a8a7a0;
 }
+
+/* Светлая: тёплый белый фон, тёмно-зелёный акцент (белый текст на нём 5.3:1),
+   приглушённый текст ≥ 6.5:1 — на проекторе светлое выцветает, поэтому темнее обычного. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --shadow: rgba(26, 27, 24, .18);
+  --bg: #f4f3ee;
+  --surface: #ffffff;
+  --text: #1a1b18;
+  --muted: #4d4f47;
+  --border: #a9aba1;
+  --accent: #1b7a4b;
+  --accent-text: #ffffff;
+  --danger: #b3261e;
+  --danger-bg: #fce8e6;
+  --done-bg: #ddf2e5;
+  --done-border: #1b7a4b;
+  --done-text: #0c4429;
+  --wait-bg: #fde4e0;
+  --wait-border: #d1352a;
+  --wait-text: #86190f;
+  --off-bg: #e6e5de;
+  --off-border: #7d7f76;
+  --off-text: #4d4f47;
+}
+:root[data-theme="light"] .btn-primary:hover,
+:root[data-theme="light"] .btn-mark:hover { filter: brightness(1.12); }
+
+/* переключатель темы: на обычных страницах — в правом верхнем углу,
+   в панели агая — в верхней полосе рядом со «Звук» / «Мини-окно» */
+.site-top { display: flex; justify-content: flex-end; width: 100%; margin-bottom: -8px; }
+.page.center .site-top { position: absolute; top: 16px; right: 16px; width: auto; margin: 0; }  /* угол окна */
+/* иконка и подпись показывают действие: в тёмной — «Светлая» (солнце), в светлой — «Тёмная» (луна) */
+.theme-toggle .theme-to-dark { display: none; }
+:root[data-theme="light"] .theme-toggle .theme-to-light { display: none; }
+:root[data-theme="light"] .theme-toggle .theme-to-dark { display: inline-flex; }
+.theme-toggle > span { align-items: center; gap: .5em; display: inline-flex; }
+.theme-toggle:not(.btn-ghost) { background: var(--surface); }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -195,7 +236,7 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
   background: var(--surface);
   border: 1px solid var(--off-border);
   border-radius: var(--radius);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+  box-shadow: 0 12px 32px var(--shadow);
   font-size: .85rem;
 }
 .sound-switch { display: flex; align-items: center; gap: 12px; font-weight: 600; cursor: pointer; min-height: 44px; }

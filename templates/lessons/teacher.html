@@ -2,6 +2,7 @@
 {% load static icons %}
 {% block title %}Урок {{ room.code }} — Записали?{% endblock %}
 {% block page_class %}wide{% endblock %}
+{% block theme_toggle %}{% endblock %}{# у агая — в верхней полосе #}
 {% block content %}
   {# 1. Верхняя панель: статус слева, второстепенные действия справа #}
   <header class="topbar">
@@ -31,6 +32,7 @@
       </div>
       <button type="button" class="btn btn-ghost btn-sm" id="btn-mini" aria-pressed="false" data-pip-only data-css="{% static 'css/mini.css' %}"
               title="Маленькое окно поверх VS Code и презентации">{% icon "picture-in-picture-2" %}<span>Мини-окно</span></button>
+      {% include "lessons/partials/theme_toggle.html" with ghost=True %}
       <span class="divider" aria-hidden="true"></span>
       <button type="button" class="btn btn-ghost btn-sm btn-ghost-danger" id="btn-finish">{% icon "square" %}Завершить урок</button>
     </div>
