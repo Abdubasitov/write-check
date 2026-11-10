@@ -100,6 +100,96 @@ class ServiceTests(TestCase):
         self.assertFalse(services.student_view(state, self.b.id)["marked"])
 
 
+class RosterAndAwayServiceTests(TestCase):
+    """Таблица агая: порядок строк, «Я вышел», «Когда»."""
+
+    def setUp(self):
+        self.room = Room.objects.create(code="1470", teacher_token="t")
+        now = timezone.now()
+
+        def add(name, online):
+            return Student.objects.create(room=self.room, name=name, token=name, is_online=online,
+                                          last_seen=now if online else None)
+
+        self.yakov = add("Яковлев Ян", True)
+        self.asan = add("асанов Бек", True)  # строчная — алфавит без учёта регистра
+        self.boris = add("Борисова Ая", False)
+        self.aida = add("Алиева Аида", False)
+        self.vera = add("Валиева Вера", True)
+        self.gul = add("Гуляева Гуля", True)
+        self.zara = add("Жумаева Зара", True)
+
+    def names(self):
+        return [(s["group"], s["name"]) for s in services.room_state(self.room)["students"]]
+
+    def test_sort_wait_offline_away_done_alphabetical(self):
+        services.mark(self.zara)
+        services.mark(self.vera)
+        services.set_away(self.gul, True)
+        self.assertEqual(self.names(), [
+            ("wait", "асанов Бек"), ("wait", "Яковлев Ян"),
+            ("offline", "Алиева Аида"), ("offline", "Борисова Ая"),
+            ("away", "Гуляева Гуля"),
+            ("done", "Валиева Вера"), ("done", "Жумаева Зара"),
+        ])
+
+    def test_mark_moves_down_unmark_moves_back(self):
+        services.mark(self.asan)
+        self.assertEqual(self.names()[-1], ("done", "асанов Бек"))
+        services.unmark(self.asan)
+        self.assertEqual(self.names()[0], ("wait", "асанов Бек"))
+
+    def test_away_not_counted(self):
+        for s in (self.yakov, self.asan, self.boris, self.aida, self.vera):
+            services.mark(s)
+        services.mark(self.gul)
+        state = services.room_state(self.room)
+        self.assertEqual((state["marked"], state["total"], state["away"]), (6, 7, 0))
+        self.assertFalse(services.all_marked(self.room))
+        services.set_away(self.zara, True)  # последний не записавший вышел
+        state = services.room_state(self.room)
+        self.assertEqual((state["marked"], state["total"], state["away"]), (6, 6, 1))
+        self.assertTrue(services.all_marked(self.room))
+        self.assertTrue(services.student_view(state, self.zara.id)["away"])
+
+    def test_away_clears_mark_and_back_is_waiting(self):
+        services.mark(self.yakov)
+        services.set_away(self.yakov, True)
+        self.assertFalse(services.mark(self.yakov))  # вышедший не отмечается
+        row = next(s for s in services.room_state(self.room)["students"] if s["id"] == self.yakov.id)
+        self.assertEqual((row["group"], row["marked"]), ("away", False))
+        self.assertIsNotNone(row["away_since"])
+        services.set_away(self.yakov, False)
+        row = next(s for s in services.room_state(self.room)["students"] if s["id"] == self.yakov.id)
+        self.assertEqual((row["group"], row["away_since"]), ("wait", None))
+        self.assertTrue(services.mark(self.yakov))
+
+    def test_away_twice_keeps_first_time(self):
+        services.set_away(self.yakov, True)
+        first = Student.objects.get(pk=self.yakov.pk).away_since
+        services.set_away(self.yakov, True)
+        self.assertEqual(Student.objects.get(pk=self.yakov.pk).away_since, first)
+
+    def test_reset_keeps_away(self):
+        services.set_away(self.yakov, True)
+        services.reset(self.room)
+        self.assertIsNotNone(Student.objects.get(pk=self.yakov.pk).away_since)
+
+    def test_round_started_at_and_when(self):
+        start = timezone.now() - timedelta(seconds=42)
+        Room.objects.filter(pk=self.room.pk).update(round_started_at=start)
+        services.mark(self.yakov)
+        row = next(s for s in services.room_state(self.room)["students"] if s["id"] == self.yakov.id)
+        self.assertAlmostEqual(row["marked_after"], 42, delta=1)
+        waiting = next(s for s in services.room_state(self.room)["students"] if s["id"] == self.asan.id)
+        self.assertIsNone(waiting["marked_after"])  # ждущим «Когда» пусто
+        services.reset(self.room)  # новый раунд — новое начало
+        self.assertGreater(Room.objects.get(pk=self.room.pk).round_started_at, start + timedelta(seconds=40))
+        room = services.timer_reset(self.room.code, 2)
+        self.assertEqual(room.round, 3)
+        self.assertGreaterEqual(room.round_started_at, Room.objects.get(pk=self.room.pk).round_started_at)
+
+
 class ExpiryAndTimerServiceTests(TestCase):
     def setUp(self):
         self.room = Room.objects.create(code="3579", teacher_token="t")
@@ -608,6 +698,63 @@ class ConsumerTests(TransactionTestCase):
         self.assertEqual((await self.room_now()).round, 2)
         await teacher.disconnect()
         await student.disconnect()
+
+    # --- «Я вышел» / «Я вернулся» -------------------------------------------
+
+    async def test_away_and_back_by_student(self):
+        teacher, student, _, _ = await self.connect_both()
+        await student.send_json_to({"type": "away"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertTrue(s["away"])
+        self.assertEqual((t["total"], t["away"], t["students"][0]["group"]), (0, 1, "away"))
+        await student.send_json_to({"type": "mark"})  # вышедший не отмечается
+        self.assertEqual((await student.receive_json_from())["type"], "error")
+        await student.send_json_to({"type": "back"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertFalse(s["away"])
+        self.assertEqual((t["total"], t["away"], t["students"][0]["group"]), (1, 0, "wait"))
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_teacher_cannot_send_away(self):
+        teacher, student, _, _ = await self.connect_both()
+        for action in ("away", "back"):
+            await teacher.send_json_to({"type": action})
+            msg = await teacher.receive_json_from()
+            self.assertEqual((msg["type"], msg["action"]), ("error", action))
+        student_row = await database_sync_to_async(Student.objects.get)(pk=self.student.pk)
+        self.assertIsNone(student_row.away_since)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_away_lets_auto_next_run(self):
+        # двое: один записал, второй вышел → все оставшиеся записали → авто-раунд
+        await database_sync_to_async(Student.objects.create)(room=self.room, name="Бек", token="bek-token")
+        bek = self.comm(f"{STUDENT_TOKEN_COOKIE}=bek-token".encode())
+        teacher, student, _, _ = await self.connect_both()
+        await bek.connect()
+        await bek.receive_json_from()
+        await student.receive_json_from()
+        await teacher.receive_json_from()
+        await student.send_json_to({"type": "mark"})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        await bek.receive_json_from()
+        self.assertEqual((t["marked"], t["total"], t["auto_next_at"]), (1, 2, None))
+        await bek.send_json_to({"type": "away"})
+        t = await teacher.receive_json_from()
+        await student.receive_json_from()
+        await bek.receive_json_from()
+        self.assertEqual((t["marked"], t["total"]), (1, 1))
+        self.assertIsNotNone(t["auto_next_at"])
+        t = await teacher.receive_json_from(timeout=AUTO + 1)
+        self.assertEqual(t["round"], 2)
+        self.assertEqual((t["marked"], t["total"], t["away"]), (0, 1, 1))  # reset «вышел» не снял
+        await teacher.disconnect()
+        await student.disconnect()
+        await bek.disconnect()
 
     # --- настройка авто-раунда (set_auto_next) -------------------------------
 

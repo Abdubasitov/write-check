@@ -13,6 +13,11 @@
         <span class="mini-marked-label">{% icon "circle-check" %}Отмечено</span>
         <button type="button" class="mini-link" data-mini="unmark">Отменить</button>
       </div>
+      <div class="mini-away" data-mini="away-box" hidden>
+        <span class="mini-away-label">{% icon "door-open" %}Вы вышли</span>
+        <button type="button" class="mini-back" data-mini="back">{% icon "log-in" %}<span data-mini="back-label">Я вернулся</span></button>
+      </div>
     </div>
+    <button type="button" class="mini-link mini-away-btn" data-mini="away">{% icon "door-open" %}Я вышел</button>
   </div>
 </template>

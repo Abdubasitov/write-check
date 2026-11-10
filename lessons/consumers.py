@@ -20,7 +20,7 @@ CLOSE_DENIED = 4003
 
 # start — только для совместимости со старыми вкладками: урок теперь начинается сразу
 TEACHER_ACTIONS = {"start", "reset", "kick", "finish", "set_timer", "hold_auto", "set_auto_next"}
-STUDENT_ACTIONS = {"mark", "unmark"}
+STUDENT_ACTIONS = {"mark", "unmark", "away", "back"}  # away/back — «Я вышел» / «Я вернулся», только о себе
 TIMER_ACTIONS = {"start", "reset", "set_timer"}
 
 
@@ -169,9 +169,11 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         services.touch(student.pk)  # любое действие = «видели сейчас»
         if action == "mark":
             if not services.mark(student):
-                return "bad"  # урок не идёт — клиент откатит «Отмечаю…»
-        else:
+                return "bad"  # урок не идёт или студент «вышел» — клиент откатит «Отмечаю…»
+        elif action == "unmark":
             services.unmark(student)
+        else:
+            services.set_away(student, action == "away")
         return None
 
     # --- рассылка ---------------------------------------------------------

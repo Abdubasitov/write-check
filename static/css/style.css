@@ -476,42 +476,47 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
 }
 .chip-timer { font-weight: 700; font-variant-numeric: tabular-nums; }
 
-/* --- список учеников: группы «Ждём» / «Записали» из компактных чипов --- */
-.roster { display: flex; flex-direction: column; gap: 24px; }
-.group { display: flex; flex-direction: column; gap: 8px; }
-.group-title {
-  margin: 0;
-  font-size: .85rem;  /* 17px при базовых 20px */
-  font-weight: 600;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-.group-title b { font-weight: 800; }
-.group-done .group-title { color: var(--done-border); }
-.chips-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-.group-empty {
-  margin: 0;
-  display: flex;
+/* --- список учеников: таблица «Фамилия Имя | Статус | Когда | ×» ---
+   Порядок строк задаёт сервер: ждём → вкладка закрыта → вышел → записал. */
+.roster-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; }
+.roster-head .section-title { margin: 0; }
+.roster-summary { margin: 0; color: var(--muted); font-size: .9rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.roster-empty { margin: 8px 0 0; color: var(--muted); font-size: .9rem; }
+.roster-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 11.5rem 9.5rem 40px;
   align-items: center;
-  gap: 8px;
+  gap: 16px;
+  min-height: 48px;
+  padding: 0 4px 0 8px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);  /* при переезде (FLIP) строки не просвечивают друг через друга */
+}
+#roster { position: relative; }
+.roster-header {
+  min-height: 36px;
+  border-top: 0;
   color: var(--muted);
-  font-size: .9rem;
+  font-size: .75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
 }
-.group-empty.is-good { color: var(--done-border); font-weight: 700; font-size: 1rem; }
+.r-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; font-weight: 600; }
+.r-status { display: inline-flex; align-items: center; gap: 8px; font-size: .85rem; font-weight: 700; white-space: nowrap; }
+.r-when { font-size: .85rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.r-kick { display: flex; justify-content: center; }
+.r-wait .r-status .icon, .r-question .r-status .icon { color: var(--wait-border); }
+.r-done .r-status { color: var(--done-border); }
+.r-done .r-when { color: var(--text); font-weight: 600; }
+.r-offline .r-status { color: var(--muted); }
+.r-away .r-name, .r-away .r-status { color: var(--muted); }
+.r-away .r-name { font-weight: 500; }
+@media (max-width: 700px) { .roster-row { grid-template-columns: minmax(0, 1fr) auto 40px; } .roster-row > :nth-child(3) { display: none; } }
 
-.st {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 320px;  /* по ширине содержимого; многоточие — только если имя правда длиннее */
-  min-height: 44px;
-  padding: 4px 4px 4px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-}
-.st-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 1rem; }
+/* чипы и пустые группы остались в мини-окне (mini.css) */
+.group-empty { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .9rem; }
+.group-empty.is-good { color: var(--done-border); font-weight: 700; font-size: 1rem; }
 .sr-only {
   position: absolute;
   width: 1px; height: 1px;
@@ -521,16 +526,10 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
   white-space: nowrap;
   border: 0;
 }
-.st-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--wait-border); }
-.st-in .st-dot { background: var(--off-border); }  /* до старта — без цветов */
-.st-done { background: var(--done-bg); border-color: transparent; color: var(--done-text); }
-.st-done > .icon { color: var(--done-border); }
-.st-offline { background: transparent; border-style: dashed; border-color: var(--off-border); color: var(--muted); }
-.st-offline > .icon { width: 18px; height: 18px; }
 .st-kick {
   flex: none;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border: 0;
   border-radius: 50%;
   background: transparent;
@@ -539,10 +538,13 @@ h2 { font-size: 1.4rem; margin: 0 0 16px; }
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  opacity: 0;  /* видно при наведении/фокусе — место зарезервировано, чип не прыгает */
+  opacity: 0;  /* видно при наведении/фокусе — место зарезервировано, строка не прыгает */
 }
 .st-kick .icon { width: 18px; height: 18px; }
-.st:hover .st-kick, .st:focus-within .st-kick { opacity: .7; }
+.roster-row:hover .st-kick, .roster-row:focus-within .st-kick { opacity: .7; }
+/* «Я вышел» у студента — вторичная, небольшая */
+.btn-away { color: var(--muted); }
+.btn-away:hover { color: var(--text); }
 .st-kick:hover, .st-kick:focus-visible { opacity: 1; background: var(--off-bg); }
 .st-kick:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 @media (hover: none) { .st-kick { opacity: .6; } }

@@ -86,14 +86,54 @@ def join_room(room, name, token):
 # --- живой урок -------------------------------------------------------------
 
 
+# Порядок групп в списке агая: кого ждём — наверху, записавшие — внизу.
+# «question» — место под учеников с вопросом (задание 3), пока не используется.
+GROUP_ORDER = {"question": 0, "wait": 1, "offline": 2, "away": 3, "done": 4}
+
+
+def student_group(online, marked, away):
+    if away:
+        return "away"
+    if marked:
+        return "done"
+    return "wait" if online else "offline"
+
+
+def sort_students(students):
+    """Сначала по группе (GROUP_ORDER), внутри — по алфавиту без учёта регистра."""
+    return sorted(students, key=lambda s: (GROUP_ORDER[s["group"]], s["name"].casefold(), s["id"]))
+
+
 def room_state(room):
-    """Полное состояние комнаты для агая: список, отметки, счётчик."""
+    """Полное состояние комнаты для агая: список (уже отсортирован), отметки, счётчик.
+
+    Вышедшие («Я вышел») не входят ни в marked, ни в total.
+    """
     room.refresh_from_db()
     students = list(room.students.all())
     fresh_after = timezone.now() - ONLINE_WINDOW
-    marked_ids = set(
-        Mark.objects.filter(student__room=room, round=room.round).values_list("student_id", flat=True)
+    mark_times = dict(
+        Mark.objects.filter(student__room=room, round=room.round).values_list("student_id", "created_at")
     )
+    rows = []
+    for s in students:
+        away = s.away_since is not None
+        marked = s.id in mark_times and not away
+        online = is_online(s, fresh_after)
+        after = None
+        if marked and room.round_started_at:
+            after = max(0, int((mark_times[s.id] - room.round_started_at).total_seconds()))
+        rows.append({
+            "id": s.id,
+            "name": s.name,
+            "online": online,
+            "marked": marked,
+            "away": away,
+            "away_since": s.away_since.timestamp() if away else None,
+            "marked_after": after,  # «Когда»: секунд от начала раунда до отметки
+            "group": student_group(online, marked, away),
+        })
+    present = [r for r in rows if not r["away"]]
     return {
         "code": room.code,
         "status": room.status,
@@ -101,12 +141,10 @@ def room_state(room):
         "timer_seconds": room.timer_seconds,
         "auto_next_enabled": room.auto_next_enabled,
         "auto_next_seconds": room.auto_next_seconds,
-        "students": [
-            {"id": s.id, "name": s.name, "online": is_online(s, fresh_after), "marked": s.id in marked_ids}
-            for s in students
-        ],
-        "marked": len(marked_ids),
-        "total": len(students),
+        "students": sort_students(rows),
+        "marked": sum(1 for r in present if r["marked"]),
+        "total": len(present),
+        "away": len(rows) - len(present),
     }
 
 
@@ -117,6 +155,7 @@ def student_view(state, student_id):
         "status": state["status"],
         "round": state["round"],
         "marked": bool(me and me["marked"]),
+        "away": bool(me and me["away"]),
         "name": me["name"] if me else "",
         "deadline": state.get("deadline"),
         "auto_next_at": state.get("auto_next_at"),
@@ -135,6 +174,8 @@ def mark(student):
     room = Room.objects.get(pk=student.room_id)
     if room.status != Room.Status.ACTIVE:
         return False
+    if Student.objects.filter(pk=student.pk, away_since__isnull=False).exists():
+        return False  # вышел — сначала «Я вернулся»
     try:
         with transaction.atomic():
             Mark.objects.get_or_create(student=student, round=room.round)
@@ -148,6 +189,16 @@ def unmark(student):
     Mark.objects.filter(student=student, round=room.round).delete()
 
 
+def set_away(student, away):
+    """«Я вышел» / «Я вернулся». Отметка текущего раунда снимается: вернулся — снова «Ждём».
+    Сброс раунда «вышел» не снимает."""
+    if away:
+        Student.objects.filter(pk=student.pk, away_since__isnull=True).update(away_since=timezone.now())
+    else:
+        Student.objects.filter(pk=student.pk).update(away_since=None)
+    unmark(student)
+
+
 def reset(room, expected_round=None):
     """Новый раунд: round + 1, отметки обнуляются, таймер выключается (он только на один раунд).
 
@@ -159,7 +210,7 @@ def reset(room, expected_round=None):
         expected_round = Room.objects.values_list("round", flat=True).get(pk=room.pk)
     with transaction.atomic():
         updated = Room.objects.filter(pk=room.pk, round=expected_round).update(
-            round=F("round") + 1, timer_seconds=None
+            round=F("round") + 1, timer_seconds=None, round_started_at=timezone.now()
         )
         if not updated:
             return None
@@ -175,9 +226,10 @@ def timer_reset(code, expected_round):
 
 
 def all_marked(room):
-    """Записали все ученики комнаты (как в счётчике: marked == total > 0)."""
-    total = room.students.count()
-    marked = Mark.objects.filter(student__room=room, round=room.round).count()
+    """Записали все ученики комнаты, кроме вышедших (как в счётчике: marked == total > 0)."""
+    present = room.students.filter(away_since__isnull=True)
+    total = present.count()
+    marked = Mark.objects.filter(student__in=present, round=room.round).count()
     return total > 0 and marked == total
 
 

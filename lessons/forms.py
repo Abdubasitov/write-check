@@ -1,5 +1,9 @@
 from django import forms
 
+from .models import NAME_MAX, NAME_MIN
+
+NAME_LENGTH_ERROR = f"Фамилия и имя — от {NAME_MIN} до {NAME_MAX} символов"
+
 
 class TeacherPasswordForm(forms.Form):
     password = forms.CharField(
@@ -11,15 +15,15 @@ class TeacherPasswordForm(forms.Form):
 
 class JoinForm(forms.Form):
     name = forms.CharField(
-        label="Имя",
-        min_length=2,
-        max_length=30,
+        label="Фамилия и имя",
+        min_length=NAME_MIN,
+        max_length=NAME_MAX,
         error_messages={
-            "required": "Введите имя",
-            "min_length": "Имя — от 2 до 30 символов",
-            "max_length": "Имя — от 2 до 30 символов",
+            "required": "Введите фамилию и имя",
+            "min_length": NAME_LENGTH_ERROR,
+            "max_length": NAME_LENGTH_ERROR,
         },
-        widget=forms.TextInput(attrs={"autocomplete": "name"}),
+        widget=forms.TextInput(attrs={"autocomplete": "name", "placeholder": "Абдубаситов Абай"}),
     )
     code = forms.CharField(
         label="Код урока",

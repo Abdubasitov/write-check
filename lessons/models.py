@@ -1,5 +1,8 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
+
+NAME_MIN, NAME_MAX = 2, 40  # «Фамилия Имя» одним полем
 
 
 def default_auto_next_seconds():
@@ -17,6 +20,8 @@ class Room(models.Model):
     teacher_token = models.CharField(max_length=64)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
     round = models.PositiveIntegerField("раунд", default=1)
+    # начало текущего раунда: «Когда» у записавших = Mark.created_at − это время
+    round_started_at = models.DateTimeField(default=timezone.now)
     timer_seconds = models.PositiveIntegerField(null=True, blank=True)  # null = без таймера
     # все записали → новый раунд через N с (агай меняет в меню «Авто-раунд»; из панели — целые 1–60)
     auto_next_enabled = models.BooleanField(default=True)
@@ -33,10 +38,12 @@ class Room(models.Model):
 
 class Student(models.Model):
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="students")
-    name = models.CharField("имя", max_length=30)
+    name = models.CharField("фамилия и имя", max_length=NAME_MAX)
     token = models.CharField(max_length=64)
     is_online = models.BooleanField(default=False)  # есть открытый сокет (по счётчику соединений)
     last_seen = models.DateTimeField(null=True, blank=True)  # последний ping/действие; онлайн = свежий
+    # «Я вышел»: не считается в «Записали X / Y» и не мешает авто-раунду; null — на уроке
+    away_since = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

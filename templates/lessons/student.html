@@ -23,6 +23,14 @@
       <p class="mark-error" id="mark-error" role="alert" hidden></p>
       <button type="button" class="btn btn-big btn-pip" id="btn-pip" data-pip-only>{% icon "picture-in-picture-2" %}Свернуть в мини-окно</button>
       <p class="muted hint" data-pip-only>Окошко останется поверх VS Code — нажимайте «Записал» прямо в нём.</p>
+      <button type="button" class="btn btn-ghost btn-sm btn-away" id="btn-away">{% icon "door-open" %}Я вышел</button>
+    </section>
+
+    {# «Я вышел»: не считается в счётчике агая, пока не вернётся #}
+    <section id="view-away" class="student-view" hidden>
+      <h1 class="waiting">{% icon "door-open" %}Вы вышли из урока</h1>
+      <p class="muted hint">Агай видит, что вас нет. Вернётесь — нажмите кнопку.</p>
+      <button type="button" class="btn btn-primary btn-big" id="btn-back">{% icon "log-in" %}<span class="btn-label">Я вернулся</span></button>
     </section>
 
     <section id="view-pip" class="student-view" hidden>

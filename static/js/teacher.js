@@ -7,76 +7,63 @@
   // урок начинается сразу; waiting — только у старых комнат, сервер переводит их в active
   var STATUS_TEXT = { waiting: "Урок идёт", active: "Урок идёт", finished: "Урок завершён" };
 
-  var OFFLINE_NOTE = "вкладка закрыта";  // только для скринридера и подсказки — имя важнее
+  // Сервер присылает учеников уже отсортированными: группа (вопрос → ждём → вкладка закрыта →
+  // вышел → записал), внутри — по алфавиту. Здесь только отрисовка.
+  var STATUS = {
+    question: { icon: "hourglass", text: "Вопрос" },  // задание 3 — пока сервер не присылает
+    wait: { icon: "hourglass", text: "Ждём" },
+    offline: { icon: "wifi-off", text: "Вкладка закрыта",
+               title: "Страница студента закрыта или нет интернета" },
+    away: { icon: "door-open", text: "Вышел", title: "Студент нажал «Я вышел» — не считается в счётчике" },
+    done: { icon: "check", text: "Записал" },
+  };
+  var WAITING_GROUPS = { question: 1, wait: 1, offline: 1 };
+  var clockOffset = 0;  // серверное время − локальное, для «вышел N мин назад»
 
-  // Группы списка: «Ждём» сверху (сначала те, у кого вкладка открыта) и «Записали» ниже.
-  // Порядок внутри — как входили.
-  function onlineFirst(list) {
-    return list.filter(function (s) { return s.online; }).concat(list.filter(function (s) { return !s.online; }));
+  function waiting() { return state.students.filter(function (s) { return WAITING_GROUPS[s.group]; }); }
+
+  function mmss(sec) { var m = Math.floor(sec / 60), s = sec % 60; return m + ":" + (s < 10 ? "0" : "") + s; }
+
+  function whenText(s) {
+    if (s.group === "done" && s.marked_after != null) return mmss(s.marked_after);
+    if (s.group === "away" && s.away_since) {
+      var min = Math.floor((Date.now() + clockOffset - s.away_since * 1000) / 60000);
+      return min < 1 ? "вышел только что" : "вышел " + min + " мин назад";
+    }
+    return "";
   }
 
-  function groupsFor() {
-    var all = state.students;
-    return [
-      { key: "wait", title: "Ждём", items: onlineFirst(all.filter(function (s) { return !s.marked; })),
-        empty: all.length
-          ? { icon: "check-check", text: "Все записали", good: true }
-          : { text: "Пока никого. Продиктуйте код классу." } },
-      { key: "done", title: "Записали", items: all.filter(function (s) { return s.marked; }),
-        empty: { text: "Пока никто" } },
-    ];
+  function whenTitle(s) {
+    return s.group === "done" ? "Записал через " + whenText(s) + " после начала раунда" : "";
   }
 
-  // Чип ученика. doc — документ страницы или мини-окна. withKick — крестик удаления.
-  function studentChip(doc, s, kind, withKick) {
+  // Чип ученика для мини-окна. doc — документ мини-окна.
+  function studentChip(doc, s) {
     var li = doc.createElement("li");
-    li.className = "st st-" + kind + (s.online ? "" : " st-offline");
-    li.setAttribute("data-id", s.id);
-    li.title = s.online ? s.name : s.name + " — вкладка закрыта (страница студента закрыта или нет интернета)";
-
-    if (!s.online) li.append(Realtime.icon("wifi-off", doc));
-    else if (kind === "done") li.append(Realtime.icon("check", doc));
+    var offline = s.group === "offline";
+    li.className = "st st-wait" + (offline ? " st-offline" : "");
+    li.title = offline ? s.name + " — вкладка закрыта" : s.name;
+    if (offline) li.append(Realtime.icon("wifi-off", doc));
     else {
       var dot = doc.createElement("span");
       dot.className = "st-dot";
       dot.setAttribute("aria-hidden", "true");
       li.append(dot);
     }
-
     var name = doc.createElement("span");
     name.className = "st-name";
     name.textContent = s.name;
     li.append(name);
-
-    if (!s.online) {
-      var note = doc.createElement("span");
-      note.className = "sr-only";
-      note.textContent = ", " + OFFLINE_NOTE;
-      li.append(note);
-    }
-
-    if (withKick) {
-      var x = doc.createElement("button");
-      x.type = "button";
-      x.className = "st-kick";
-      x.append(Realtime.icon("x", doc));
-      x.title = "Удалить " + s.name;
-      x.setAttribute("aria-label", "Удалить " + s.name);
-      x.addEventListener("click", function () {
-        if (confirm("Удалить " + s.name + "?")) conn.send("kick", { student_id: s.id });
-      });
-      li.append(x);
-    }
     return li;
   }
 
   // «Ждём · 3» — число жирным
-  function setGroupTitle(el, g) {
+  function setGroupTitle(el, title, count) {
     var doc = el.ownerDocument;
     var b = doc.createElement("b");
-    b.textContent = g.items.length;
+    b.textContent = count;
     el.textContent = "";
-    el.append(doc.createTextNode(g.title + " · "), b);
+    el.append(doc.createTextNode(title + " · "), b);
   }
 
   function emptyNote(doc, empty) {
@@ -85,6 +72,49 @@
     if (empty.icon) p.append(Realtime.icon(empty.icon, doc));
     p.append(doc.createTextNode(empty.text));
     return p;
+  }
+
+  // Строка таблицы: имя | статус | когда | крестик (виден при наведении/фокусе, место зарезервировано)
+  function fillRow(row, s) {
+    var st = STATUS[s.group] || STATUS.wait;
+    row.className = "roster-row r-" + s.group;
+    row.textContent = "";
+
+    var name = document.createElement("span");
+    name.className = "r-name";
+    name.setAttribute("role", "cell");
+    name.title = s.name;
+    name.textContent = s.name;
+
+    var status = document.createElement("span");
+    status.className = "r-status";
+    status.setAttribute("role", "cell");
+    if (st.title) status.title = st.title;
+    var label = document.createElement("span");
+    label.textContent = st.text;
+    status.append(Realtime.icon(st.icon), label);
+
+    var when = document.createElement("span");
+    when.className = "r-when";
+    when.setAttribute("role", "cell");
+    when.textContent = whenText(s);
+    when.title = whenTitle(s);
+
+    var cell = document.createElement("span");
+    cell.className = "r-kick";
+    cell.setAttribute("role", "cell");
+    var x = document.createElement("button");
+    x.type = "button";
+    x.className = "st-kick";
+    x.append(Realtime.icon("x"));
+    x.title = "Удалить " + s.name;
+    x.setAttribute("aria-label", "Удалить " + s.name);
+    x.addEventListener("click", function () {
+      if (confirm("Удалить " + s.name + "?")) conn.send("kick", { student_id: s.id });
+    });
+    cell.append(x);
+
+    row.append(name, status, when, cell);
   }
 
   // --- звук «записали все»: Web Audio, без файлов -------------------------
@@ -414,45 +444,83 @@
     $("progress").setAttribute("aria-valuenow", state.marked);
     $("btn-reset").hidden = !active;
 
-    renderRoster(active);
+    if (state.now) clockOffset = state.now * 1000 - Date.now();
+    renderRoster();
     renderMini(active);
   }
 
-  function renderRoster(active) {
-    // фокус на крестике переживает перерисовку: запоминаем, у кого он был
-    var focused = document.activeElement && document.activeElement.closest && document.activeElement.closest(".st");
-    var focusedId = focused ? focused.getAttribute("data-id") : null;
+  // Таблица учеников. Строки переиспользуются по id, поэтому при смене порядка
+  // (нажал «Записал» → вниз, «Отменить» → наверх) их можно плавно передвинуть: FLIP, 200 мс.
+  var rows = {};  // id -> элемент строки
+  var reduceMotion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : { matches: false };
 
+  function renderRoster() {
     var root = $("roster");
-    root.textContent = "";
-    groupsFor(active).forEach(function (g) {
-      var section = document.createElement("section");
-      section.className = "group group-" + g.key;
-      var h = document.createElement("h3");
-      h.className = "group-title";
-      setGroupTitle(h, g);
-      section.append(h);
-      if (g.items.length) {
-        var ul = document.createElement("ul");
-        ul.className = "chips-list";
-        g.items.forEach(function (s) { ul.append(studentChip(document, s, g.key, true)); });
-        section.append(ul);
-      } else {
-        section.append(emptyNote(document, g.empty));
+    // фокус на крестике переживает перерисовку: запоминаем, у кого он был
+    var focusedRow = document.activeElement && document.activeElement.closest && document.activeElement.closest(".roster-row");
+    var focusedId = focusedRow && root.contains(focusedRow) ? focusedRow.getAttribute("data-id") : null;
+
+    var before = {};  // First: где строки были
+    Object.keys(rows).forEach(function (id) { before[id] = rows[id].getBoundingClientRect().top; });
+
+    var seen = {};
+    state.students.forEach(function (s) {
+      var id = String(s.id);
+      seen[id] = true;
+      var row = rows[id];
+      if (!row) {
+        row = rows[id] = document.createElement("div");
+        row.setAttribute("role", "row");
+        row.setAttribute("data-id", id);
       }
-      root.append(section);
+      fillRow(row, s);
+      root.append(row);  // в порядке сервера
+    });
+    Object.keys(rows).forEach(function (id) {
+      if (!seen[id]) { rows[id].remove(); delete rows[id]; }
     });
 
-    if (focusedId) {
-      var again = root.querySelector('.st[data-id="' + focusedId + '"] .st-kick');
+    // Last → Invert → Play
+    if (!reduceMotion.matches) {
+      state.students.forEach(function (s) {
+        var id = String(s.id), row = rows[id];
+        if (before[id] === undefined || !row.animate) return;
+        var dy = before[id] - row.getBoundingClientRect().top;
+        if (Math.abs(dy) < 1) return;
+        row.animate([{ transform: "translateY(" + dy + "px)" }, { transform: "none" }],
+                    { duration: 200, easing: "ease-out" });
+      });
+    }
+
+    var counts = { wait: 0, away: 0 };
+    state.students.forEach(function (s) {
+      if (WAITING_GROUPS[s.group]) counts.wait++;
+      else if (s.group === "away") counts.away++;
+    });
+    $("roster-summary").textContent = state.students.length
+      ? "Ждём " + counts.wait + " · Записали " + state.marked + " · Вышли " + counts.away
+      : "";
+    $("roster-empty").hidden = state.students.length > 0;
+    document.querySelector(".roster-header").hidden = !state.students.length;
+
+    if (focusedId && rows[focusedId]) {
+      var again = rows[focusedId].querySelector(".st-kick");
       if (again) again.focus();
     }
   }
 
+  // «вышел N мин назад» стареет без новых state — обновляем раз в 15 с
+  setInterval(function () {
+    state.students.forEach(function (s) {
+      if (s.group !== "away" || !rows[s.id]) return;
+      rows[s.id].querySelector(".r-when").textContent = whenText(s);
+    });
+  }, 15000);
+
   // --- мини-окно агая: счётчик, прогресс, короткий список, «Сбросить» -------
   var mini = null;  // {doc, el}
 
-  // В окошке — только первая группа «Ждём»; отсчёт авто-раунда — тот же, что в панели.
+  // В окошке — только «Ждём» (вышедших не показываем); отсчёт авто-раунда — тот же, что в панели.
   function renderMini(active) {
     if (!mini) return;
     var e = mini.el, doc = mini.doc;
@@ -462,13 +530,17 @@
     e.total.textContent = state.total;
     e.fill.style.width = (state.total ? Math.round((state.marked / state.total) * 100) : 0) + "%";
     e.reset.hidden = !active;
-    var g = groupsFor(active)[0];
-    setGroupTitle(e["list-title"], g);
+    var items = waiting();
+    setGroupTitle(e["list-title"], "Ждём", items.length);
     e.list.textContent = "";
-    g.items.forEach(function (s) { e.list.append(studentChip(doc, s, g.key, false)); });
+    items.forEach(function (s) { e.list.append(studentChip(doc, s)); });
     e.empty.textContent = "";
-    e.empty.hidden = g.items.length > 0;
-    if (!g.items.length) e.empty.append(emptyNote(doc, g.empty));
+    e.empty.hidden = items.length > 0;
+    if (!items.length) {
+      e.empty.append(emptyNote(doc, state.total
+        ? { icon: "check-check", text: "Все записали", good: true }
+        : { text: "Пока никого. Продиктуйте код классу." }));
+    }
   }
 
   function openMini() {

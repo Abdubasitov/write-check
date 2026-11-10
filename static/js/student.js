@@ -17,8 +17,22 @@
     doneText: "Новый раунд…",
   });
   var mini = null;     // {doc, el} пока мини-окно открыто
-  var pending = null;  // {action: "mark"|"unmark", round, timer} — ждём подтверждения
+  var pending = null;  // {action: "mark"|"unmark"|"away"|"back", round, timer} — ждём подтверждения
   var errorText = "";
+
+  // когда state подтверждает действие
+  var CONFIRMED = {
+    mark: function (s) { return s.marked; },
+    unmark: function (s) { return !s.marked; },
+    away: function (s) { return s.away; },
+    back: function (s) { return !s.away; },
+  };
+  var ERRORS = {
+    mark: "Не получилось отметить: урок уже закончился.",
+    unmark: "Не получилось отменить отметку.",
+    away: "Не получилось отметить, что вы вышли. Нажмите ещё раз.",
+    back: "Не получилось вернуться. Нажмите ещё раз.",
+  };
 
   // --- отметка: отправить → ждать state → или откатить ----------------------
 
@@ -50,7 +64,8 @@
 
   function onState(msg) {
     state = msg;
-    if (pending && (state.round !== pending.round || state.marked === (pending.action === "mark"))) {
+    var markAction = pending && (pending.action === "mark" || pending.action === "unmark");
+    if (pending && ((markAction && state.round !== pending.round) || CONFIRMED[pending.action](state))) {
       clearPending();  // сервер подтвердил (или начался новый раунд)
       errorText = "";
     }
@@ -58,11 +73,9 @@
   }
 
   function onError(msg) {
-    if (msg.action !== "mark" && msg.action !== "unmark") return;
+    if (!ERRORS[msg.action]) return;
     clearPending();
-    errorText = msg.action === "mark"
-      ? "Не получилось отметить: урок уже закончился."
-      : "Не получилось отменить отметку.";
+    errorText = ERRORS[msg.action];
     render();
   }
 
@@ -74,13 +87,20 @@
     var pipOpen = mini !== null;
     var marking = pending && pending.action === "mark";
     var unmarking = pending && pending.action === "unmark";
+    var away = !!state.away;
+    var busy = pending && (pending.action === "away" || pending.action === "back");
 
     $("round").textContent = state.round;
-    $("round-chip").hidden = !active;  // до старта раунд не показываем
-    updateCountdown(active && !state.auto_next_at ? state : {});
-    updateAuto(active ? state : {});
-    $("view-active").hidden = pipOpen || !active;
+    $("round-chip").hidden = !active;
+    // вышедшему отсчёты не нужны — он не участвует в раунде
+    updateCountdown(active && !away && !state.auto_next_at ? state : {});
+    updateAuto(active && !away ? state : {});
+    $("view-active").hidden = pipOpen || !active || away;
+    $("view-away").hidden = pipOpen || !active || !away;
     $("view-pip").hidden = !pipOpen;
+    $("btn-away").disabled = !!busy;
+    $("btn-back").disabled = !!busy;
+    $("btn-back").querySelector(".btn-label").textContent = busy ? "Возвращаюсь…" : "Я вернулся";
 
     var btn = $("btn-mark");
     btn.hidden = state.marked;
@@ -92,17 +112,25 @@
     $("btn-unmark").textContent = unmarking ? "Отменяю…" : "Отменить";
     $("mark-error").hidden = !errorText;
     $("mark-error").textContent = errorText;
-    renderMini(active, marking, unmarking);
+    // ошибка «Я вышел/вернулся» видна и на экране «Вы вышли»
+    if (away && errorText) $("view-away").querySelector(".hint").textContent = errorText;
+    else $("view-away").querySelector(".hint").textContent = "Агай видит, что вас нет. Вернётесь — нажмите кнопку.";
+    renderMini(active, marking, unmarking, away, busy);
   }
 
-  function renderMini(active, marking, unmarking) {
+  function renderMini(active, marking, unmarking, away, busy) {
     if (!mini) return;
     var e = mini.el;
     e.round.textContent = state.round;
-    e.mark.hidden = !active || state.marked;
+    e.mark.hidden = !active || away || state.marked;
     e.mark.disabled = !!marking;
     e["mark-label"].textContent = marking ? "Отмечаю…" : "Записал";
-    e.marked.hidden = !active || !state.marked;
+    e.marked.hidden = !active || away || !state.marked;
+    e["away-box"].hidden = !active || !away;
+    e.away.hidden = !active || away;
+    e.away.disabled = !!busy;
+    e.back.disabled = !!busy;
+    e["back-label"].textContent = busy ? "Возвращаюсь…" : "Я вернулся";
     e.unmark.disabled = !!unmarking;
     e.unmark.textContent = unmarking ? "Отменяю…" : "Отменить";
     e.error.hidden = !errorText;
@@ -115,12 +143,14 @@
       templateId: "mini-student-tpl",
       cssHref: ZAP.miniCss,
       width: 240,
-      height: 165,
+      height: 190,
       onOpen: function (doc) {
         var el = {};
         doc.querySelectorAll("[data-mini]").forEach(function (n) { el[n.getAttribute("data-mini")] = n; });
         el.mark.addEventListener("click", function () { send("mark"); });
         el.unmark.addEventListener("click", function () { send("unmark"); });
+        el.away.addEventListener("click", function () { send("away"); });
+        el.back.addEventListener("click", function () { send("back"); });
         el.expand.addEventListener("click", function () { Pip.close(); window.focus(); });
         mini = { doc: doc, el: el };
         updateCountdown.attach(el.countdown);
@@ -178,6 +208,8 @@
 
   $("btn-mark").addEventListener("click", function () { send("mark"); });
   $("btn-unmark").addEventListener("click", function () { send("unmark"); });
+  $("btn-away").addEventListener("click", function () { send("away"); });
+  $("btn-back").addEventListener("click", function () { send("back"); });
   if (Pip.supported) {
     $("btn-pip").addEventListener("click", openMini);
     $("btn-pip-return").addEventListener("click", function () { Pip.close(); });

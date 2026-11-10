@@ -124,8 +124,21 @@
   <script>try{if(localStorage.getItem("zap_code_hidden_{{ room.code|escapejs }}")==="1"){document.getElementById("code-banner").hidden=true;document.getElementById("teacher-top").classList.add("code-hidden");document.getElementById("code-chip").hidden=false;}}catch(e){}</script>
 
   <section class="card">
-    <h2 class="section-title">{% icon "users" %}Ученики</h2>
-    <div class="roster" id="roster"></div>
+    <div class="roster-head">
+      <h2 class="section-title">{% icon "users" %}Ученики</h2>
+      <p class="roster-summary" id="roster-summary" aria-live="polite"></p>
+    </div>
+    {# строки отсортированы сервером: ждём → вкладка закрыта → вышел → записал, внутри по алфавиту #}
+    <div class="roster-table" role="table" aria-label="Ученики">
+      <div class="roster-row roster-header" role="row">
+        <span role="columnheader">Фамилия Имя</span>
+        <span role="columnheader">Статус</span>
+        <span role="columnheader">Когда</span>
+        <span role="columnheader"><span class="sr-only">Удалить</span></span>
+      </div>
+      <div id="roster" role="rowgroup"></div>
+    </div>
+    <p class="roster-empty" id="roster-empty" hidden>Пока никого. Продиктуйте код классу.</p>
   </section>
 
   <div class="finished-screen" id="finished" hidden>
