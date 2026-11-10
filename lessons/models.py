@@ -44,6 +44,11 @@ class Student(models.Model):
     last_seen = models.DateTimeField(null=True, blank=True)  # последний ping/действие; онлайн = свежий
     # «Я вышел»: не считается в «Записали X / Y» и не мешает авто-раунду; null — на уроке
     away_since = models.DateTimeField(null=True, blank=True)
+    # «✋ Вопрос»: тип открытого вопроса и когда задан (очередь). Новый раунд вопрос не снимает;
+    # снимают «Разобрался» (студент), «Ответил» (агай), «Я вышел» и удаление.
+    QUESTION_TYPES = (("question", "Вопрос"), ("bug", "Ошибка в коде"))
+    question_type = models.CharField(max_length=10, choices=QUESTION_TYPES, null=True, blank=True)
+    question_at = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

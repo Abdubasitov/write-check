@@ -17,8 +17,9 @@
     doneText: "Новый раунд…",
   });
   var mini = null;     // {doc, el} пока мини-окно открыто
-  var pending = null;  // {action: "mark"|"unmark"|"away"|"back", round, timer} — ждём подтверждения
+  var pending = null;  // {action: "mark"|"unmark"|"away"|"back"|"ask"|"resolve", round, timer} — ждём подтверждения
   var errorText = "";
+  var choiceOpen = false;  // раскрыт выбор «Вопрос / Ошибка в коде» (страница или мини-окно)
 
   // когда state подтверждает действие
   var CONFIRMED = {
@@ -26,13 +27,19 @@
     unmark: function (s) { return !s.marked; },
     away: function (s) { return s.away; },
     back: function (s) { return !s.away; },
+    ask: function (s) { return !!s.question; },
+    resolve: function (s) { return !s.question; },
   };
   var ERRORS = {
     mark: "Не получилось отметить: урок уже закончился.",
     unmark: "Не получилось отменить отметку.",
     away: "Не получилось отметить, что вы вышли. Нажмите ещё раз.",
     back: "Не получилось вернуться. Нажмите ещё раз.",
+    ask: "Вопрос не отправлен. Нажмите ещё раз.",
+    resolve: "Не получилось снять вопрос. Нажмите ещё раз.",
   };
+
+  function ordinal(n) { return n + "-й"; }  // 1-й, 2-й, 3-й… — в мужском роде у всех чисел «-й»
 
   // --- отметка: отправить → ждать state → или откатить ----------------------
 
@@ -41,7 +48,7 @@
     pending = null;
   }
 
-  function send(action) {
+  function send(action, extra) {
     if (pending) return;
     if (!conn.isOpen()) {
       errorText = "Нет связи с сервером — отметка не отправлена. Переподключаемся, нажмите ещё раз через пару секунд.";
@@ -58,8 +65,13 @@
         render();
       }, CONFIRM_TIMEOUT_MS),
     };
-    conn.send(action);
+    conn.send(action, extra);
     render();
+  }
+
+  function ask(type) {
+    choiceOpen = false;
+    send("ask", { question_type: type });
   }
 
   function onState(msg) {
@@ -115,10 +127,25 @@
     // ошибка «Я вышел/вернулся» видна и на экране «Вы вышли»
     if (away && errorText) $("view-away").querySelector(".hint").textContent = errorText;
     else $("view-away").querySelector(".hint").textContent = "Агай видит, что вас нет. Вернётесь — нажмите кнопку.";
-    renderMini(active, marking, unmarking, away, busy);
+
+    // ✋ вопрос: открыт → «Вопрос отправлен · Вы N-й в очереди» + «Разобрался»; «Записал» работает как обычно
+    var asked = !!state.question;
+    var asking = pending && pending.action === "ask";
+    var resolving = pending && pending.action === "resolve";
+    if (asked) choiceOpen = false;
+    var queue = state.queue_pos ? "Вы " + ordinal(state.queue_pos) + " в очереди" : "";
+    $("question-open").hidden = !asked;
+    $("queue-text").textContent = queue;
+    $("btn-resolve").disabled = !!resolving;
+    $("btn-resolve").querySelector(".btn-label").textContent = resolving ? "Снимаю…" : "Разобрался";
+    $("btn-ask").hidden = asked;
+    $("btn-ask").disabled = !!asking;
+    $("btn-ask").setAttribute("aria-expanded", String(choiceOpen));
+    $("ask-choice").hidden = !choiceOpen || asked;
+    renderMini(active, marking, unmarking, away, busy, asked, asking, resolving, queue);
   }
 
-  function renderMini(active, marking, unmarking, away, busy) {
+  function renderMini(active, marking, unmarking, away, busy, asked, asking, resolving, queue) {
     if (!mini) return;
     var e = mini.el;
     e.round.textContent = state.round;
@@ -127,7 +154,15 @@
     e["mark-label"].textContent = marking ? "Отмечаю…" : "Записал";
     e.marked.hidden = !active || away || !state.marked;
     e["away-box"].hidden = !active || !away;
-    e.away.hidden = !active || away;
+    e.bottom.hidden = !active || away;
+    e.ask.hidden = asked;
+    e.ask.disabled = !!asking;
+    e.ask.setAttribute("aria-expanded", String(choiceOpen));
+    e["q-choice"].hidden = !choiceOpen || asked || away;
+    e["q-open"].hidden = !asked || away;
+    e["q-text"].textContent = queue || "Вопрос отправлен";
+    e.resolve.disabled = !!resolving;
+    e.resolve.textContent = resolving ? "Снимаю…" : "Разобрался";
     e.away.disabled = !!busy;
     e.back.disabled = !!busy;
     e["back-label"].textContent = busy ? "Возвращаюсь…" : "Я вернулся";
@@ -143,7 +178,7 @@
       templateId: "mini-student-tpl",
       cssHref: ZAP.miniCss,
       width: 240,
-      height: 190,
+      height: 215,
       onOpen: function (doc) {
         var el = {};
         doc.querySelectorAll("[data-mini]").forEach(function (n) { el[n.getAttribute("data-mini")] = n; });
@@ -151,6 +186,10 @@
         el.unmark.addEventListener("click", function () { send("unmark"); });
         el.away.addEventListener("click", function () { send("away"); });
         el.back.addEventListener("click", function () { send("back"); });
+        el.ask.addEventListener("click", toggleChoice);
+        el["ask-question"].addEventListener("click", function () { ask("question"); });
+        el["ask-bug"].addEventListener("click", function () { ask("bug"); });
+        el.resolve.addEventListener("click", function () { send("resolve"); });
         el.expand.addEventListener("click", function () { Pip.close(); window.focus(); });
         mini = { doc: doc, el: el };
         updateCountdown.attach(el.countdown);
@@ -209,6 +248,14 @@
   $("btn-mark").addEventListener("click", function () { send("mark"); });
   $("btn-unmark").addEventListener("click", function () { send("unmark"); });
   $("btn-away").addEventListener("click", function () { send("away"); });
+  function toggleChoice() { choiceOpen = !choiceOpen; render(); }
+  $("btn-ask").addEventListener("click", toggleChoice);
+  $("ask-question").addEventListener("click", function () { ask("question"); });
+  $("ask-bug").addEventListener("click", function () { ask("bug"); });
+  $("btn-resolve").addEventListener("click", function () { send("resolve"); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && choiceOpen) { choiceOpen = false; render(); $("btn-ask").focus(); }
+  });
   $("btn-back").addEventListener("click", function () { send("back"); });
   if (Pip.supported) {
     $("btn-pip").addEventListener("click", openMini);

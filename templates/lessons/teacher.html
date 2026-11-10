@@ -13,6 +13,8 @@
       </span>
       {# код скрыт → компактный чип; клик снова показывает большую карточку #}
       <button type="button" class="code-chip" id="code-chip" hidden title="Показать код крупно">{% icon "eye" %}<span>Код <b>{{ room.code }}</b></span></button>
+      {# есть вопросы → «✋ N»; клик — к таблице. Мигает при новом вопросе (даже без звука) #}
+      <button type="button" class="code-chip q-chip" id="q-chip" hidden title="Вопросы — показать в списке">{% icon "hand" %}<b id="q-count">0</b><span class="sr-only"> вопросов</span></button>
     </div>
     <div class="topbar-actions">
       {# звук «записали все»: меню — вкл/выкл, вариант сигнала, «Проверить» #}
@@ -32,6 +34,19 @@
             <label><input type="radio" name="sound-variant" value="double"><span>Двойной</span></label>
           </fieldset>
           <button type="button" class="btn btn-sm sound-test" id="sound-test">{% icon "play" %}Проверить</button>
+          <div class="pop-sep" aria-hidden="true"></div>
+          {# вопрос студента: свой сигнал и свой переключатель #}
+          <label class="sound-switch">
+            <input type="checkbox" id="q-sound-on" role="switch">
+            <span class="sound-switch-track" aria-hidden="true"></span>
+            <span>Сигнал о вопросе</span>
+          </label>
+          <button type="button" class="btn btn-sm sound-test" id="q-sound-test">{% icon "hand" %}Проверить сигнал вопроса</button>
+          <div class="notify-row">
+            <span class="notify-label">Уведомления на компьютере:</span>
+            <button type="button" class="btn btn-sm btn-primary" id="notify-enable" hidden>Включить</button>
+            <span class="notify-status" id="notify-status" role="status"></span>
+          </div>
         </div>
       </div>
       {# авто-раунд: настройка хранится на сервере в комнате (set_auto_next) #}
@@ -96,12 +111,12 @@
         </div>
         <p class="countdown-line" id="auto-held" hidden>{% icon "pause" %}Авто-раунд отложен — нажмите «Сбросить», когда будете готовы</p>
         <button type="button" class="btn btn-primary btn-big" id="btn-reset" hidden>{% icon "rotate-ccw" %}Сбросить</button>
-        <p class="countdown-line" id="countdown" data-prefix="Автосброс через " aria-live="off" hidden>{% icon "timer" %}<span class="cd-text"></span></p>
+        <p class="countdown-line" id="countdown" data-prefix="Таймер: " aria-live="off" hidden>{% icon "timer" %}<span class="cd-text"></span></p>
       </div>
 
-      {# 3. Автосброс: сегментированный переключатель (radio — стрелки работают сами) #}
+      {# 3. Таймер раунда: сегментированный переключатель (radio — стрелки работают сами) #}
       <div class="timer-row">
-        <span class="timer-label" id="timer-label">Автосброс</span>
+        <span class="timer-label" id="timer-label">{% icon "timer" %}Таймер раунда</span>
         <div class="timer-controls">
         <div class="segmented" role="radiogroup" aria-labelledby="timer-label">
           <input type="radio" name="timer" id="timer-off" value=""><label for="timer-off">Выкл</label>
@@ -109,7 +124,7 @@
           <input type="radio" name="timer" id="timer-custom-radio" value="custom"><label for="timer-custom-radio">Своё</label>
         </div>
         <span class="custom-timer" id="custom-timer" hidden>
-          <input type="number" id="timer-custom" class="input-sm" min="10" max="3600" step="5" inputmode="numeric" aria-label="Секунд до автосброса">
+          <input type="number" id="timer-custom" class="input-sm" min="10" max="3600" step="5" inputmode="numeric" aria-label="Секунд таймера раунда">
           <span class="muted">с</span>
           <button type="button" class="btn btn-sm btn-primary" id="timer-apply">Ок</button>
         </span>
@@ -123,7 +138,7 @@
   {# скрытый код применяем до отрисовки, чтобы после F5 карточка не мелькала (teacher.js делает то же) #}
   <script>try{if(localStorage.getItem("zap_code_hidden_{{ room.code|escapejs }}")==="1"){document.getElementById("code-banner").hidden=true;document.getElementById("teacher-top").classList.add("code-hidden");document.getElementById("code-chip").hidden=false;}}catch(e){}</script>
 
-  <section class="card">
+  <section class="card" id="roster-card">
     <div class="roster-head">
       <h2 class="section-title">{% icon "users" %}Ученики</h2>
       <p class="roster-summary" id="roster-summary" aria-live="polite"></p>

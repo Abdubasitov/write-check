@@ -86,22 +86,28 @@ def join_room(room, name, token):
 # --- живой урок -------------------------------------------------------------
 
 
-# Порядок групп в списке агая: кого ждём — наверху, записавшие — внизу.
-# «question» — место под учеников с вопросом (задание 3), пока не используется.
+# Порядок групп в списке агая: с вопросом — в самом верху, кого ждём — дальше, записавшие — внизу.
 GROUP_ORDER = {"question": 0, "wait": 1, "offline": 2, "away": 3, "done": 4}
+QUESTION_TYPES = {"question", "bug"}
 
 
-def student_group(online, marked, away):
+def student_group(online, marked, away, question=None):
     if away:
         return "away"
+    if question:
+        return "question"
     if marked:
         return "done"
     return "wait" if online else "offline"
 
 
 def sort_students(students):
-    """Сначала по группе (GROUP_ORDER), внутри — по алфавиту без учёта регистра."""
-    return sorted(students, key=lambda s: (GROUP_ORDER[s["group"]], s["name"].casefold(), s["id"]))
+    """Сначала по группе (GROUP_ORDER); вопросы — по очереди (кто раньше спросил — выше),
+    остальные — по алфавиту без учёта регистра."""
+    def key(s):
+        asked = s.get("question_at") or 0 if s["group"] == "question" else 0
+        return (GROUP_ORDER[s["group"]], asked, s["name"].casefold(), s["id"])
+    return sorted(students, key=key)
 
 
 def room_state(room):
@@ -123,6 +129,7 @@ def room_state(room):
         after = None
         if marked and room.round_started_at:
             after = max(0, int((mark_times[s.id] - room.round_started_at).total_seconds()))
+        question = s.question_type if not away else None
         rows.append({
             "id": s.id,
             "name": s.name,
@@ -131,9 +138,15 @@ def room_state(room):
             "away": away,
             "away_since": s.away_since.timestamp() if away else None,
             "marked_after": after,  # «Когда»: секунд от начала раунда до отметки
-            "group": student_group(online, marked, away),
+            "question": question,  # None | "question" | "bug"
+            "question_at": s.question_at.timestamp() if question and s.question_at else None,
+            "group": student_group(online, marked, away, question),
         })
     present = [r for r in rows if not r["away"]]
+    ordered = sort_students(rows)
+    queue = [r for r in ordered if r["group"] == "question"]
+    for pos, r in enumerate(queue, start=1):
+        r["queue_pos"] = pos
     return {
         "code": room.code,
         "status": room.status,
@@ -141,10 +154,11 @@ def room_state(room):
         "timer_seconds": room.timer_seconds,
         "auto_next_enabled": room.auto_next_enabled,
         "auto_next_seconds": room.auto_next_seconds,
-        "students": sort_students(rows),
+        "students": ordered,
         "marked": sum(1 for r in present if r["marked"]),
         "total": len(present),
         "away": len(rows) - len(present),
+        "questions": len(queue),
     }
 
 
@@ -156,6 +170,9 @@ def student_view(state, student_id):
         "round": state["round"],
         "marked": bool(me and me["marked"]),
         "away": bool(me and me["away"]),
+        # только свой вопрос и место в очереди — чужих имён студенту не шлём
+        "question": me["question"] if me else None,
+        "queue_pos": me.get("queue_pos") if me else None,
         "name": me["name"] if me else "",
         "deadline": state.get("deadline"),
         "auto_next_at": state.get("auto_next_at"),
@@ -194,9 +211,36 @@ def set_away(student, away):
     Сброс раунда «вышел» не снимает."""
     if away:
         Student.objects.filter(pk=student.pk, away_since__isnull=True).update(away_since=timezone.now())
+        resolve(student)  # вышел — вопрос снимается
     else:
         Student.objects.filter(pk=student.pk).update(away_since=None)
     unmark(student)
+
+
+def ask(student, question_type):
+    """«✋ Вопрос»: тип question/bug. Повторный — меняет тип, место в очереди сохраняется.
+    False — неверный тип или студент «вышел»."""
+    if question_type not in QUESTION_TYPES:
+        return False
+    current = Student.objects.filter(pk=student.pk, away_since__isnull=True).first()
+    if current is None:
+        return False
+    current.question_type = question_type
+    current.question_at = current.question_at or timezone.now()
+    current.save(update_fields=["question_type", "question_at"])
+    return True
+
+
+def resolve(student):
+    """«Разобрался» (студент) — вопрос снят."""
+    Student.objects.filter(pk=student.pk).update(question_type=None, question_at=None)
+
+
+def answer(room, student_id):
+    """«Ответил» (агай): снимает вопрос студента своей комнаты. True — был открытый вопрос."""
+    return Student.objects.filter(room=room, pk=student_id, question_type__isnull=False).update(
+        question_type=None, question_at=None
+    ) > 0
 
 
 def reset(room, expected_round=None):

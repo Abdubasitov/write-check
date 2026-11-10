@@ -7,13 +7,15 @@
     <div class="mini-counter"><b data-mini="marked">0</b>/<span data-mini="total">0</span></div>
     <div class="mini-progress"><div class="mini-progress-fill" data-mini="fill"></div></div>
     <div class="mini-row">
-      <span class="mini-countdown" data-mini="countdown" data-prefix="" hidden>{% icon "timer" %}<span class="cd-text"></span></span>
+      <span class="mini-countdown" data-mini="countdown" data-prefix="Таймер: " hidden>{% icon "timer" %}<span class="cd-text"></span></span>
       <button type="button" class="mini-reset" data-mini="reset">{% icon "rotate-ccw" %}Сбросить</button>
     </div>
     <div class="mini-auto" data-mini="auto" data-prefix="Новый раунд через " role="status" hidden>
       <span class="mini-auto-text">{% icon "check-check" %}<span class="cd-text"></span></span>
       <button type="button" class="mini-hold" data-mini="hold">Подождать</button>
     </div>
+    {# вопросы — над «Ждём», жёлтые; при новом вопросе окно подсвечивается #}
+    <ul class="mini-list mini-questions" data-mini="questions" hidden></ul>
     <div class="mini-list-title" data-mini="list-title"></div>
     <ul class="mini-list" data-mini="list"></ul>
     <div class="mini-empty" data-mini="empty" hidden></div>

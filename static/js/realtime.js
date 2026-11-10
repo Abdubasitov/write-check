@@ -58,14 +58,14 @@
     };
   }
 
-  // Обратный отсчёт до автосброса. Сервер присылает deadline и своё now —
+  // Обратный отсчёт таймера раунда («Таймер: 1:23»). Сервер присылает deadline и своё now —
   // по разнице учитываем расхождение часов компьютера и сервера.
   // Возвращает update(state); update.attach(el)/detach(el) — доп. места (мини-окно).
   // opts: field — какое поле state считать (по умолчанию deadline), format(sec), doneText.
   function countdown(el, prefix, opts) {
     opts = opts || {};
     var field = opts.field || "deadline";
-    var doneText = opts.doneText || "Сброс…";
+    var doneText = opts.doneText || "Новый раунд…";
     var els = [el];
     var deadlineMs = null;
     var offsetMs = 0;
@@ -84,7 +84,7 @@
       }
       els.forEach(function (e) {
         var p = e.getAttribute("data-prefix");
-        if (p === null) p = prefix === undefined ? "Сброс через " : prefix;
+        if (p === null) p = prefix === undefined ? "Таймер: " : prefix;
         e.hidden = text === null;
         // внутри может быть иконка — пишем только в .cd-text
         if (text !== null) (e.querySelector(".cd-text") || e).textContent = text === "…" ? doneText : p + text;

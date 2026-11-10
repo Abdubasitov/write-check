@@ -190,6 +190,100 @@ class RosterAndAwayServiceTests(TestCase):
         self.assertGreaterEqual(room.round_started_at, Room.objects.get(pk=self.room.pk).round_started_at)
 
 
+class QuestionServiceTests(TestCase):
+    """«✋ Вопрос»: очередь, сортировка, что снимает вопрос."""
+
+    def setUp(self):
+        self.room = Room.objects.create(code="2580", teacher_token="t")
+        now = timezone.now()
+        self.a = Student.objects.create(room=self.room, name="Айдар", token="a", is_online=True, last_seen=now)
+        self.b = Student.objects.create(room=self.room, name="Бек", token="b", is_online=True, last_seen=now)
+        self.c = Student.objects.create(room=self.room, name="Вера", token="c", is_online=False)
+        self.d = Student.objects.create(room=self.room, name="Гуля", token="d", is_online=True, last_seen=now)
+
+    def state(self):
+        return services.room_state(self.room)
+
+    def ask_at(self, student, qtype, seconds_ago):
+        self.assertTrue(services.ask(student, qtype))
+        Student.objects.filter(pk=student.pk).update(question_at=timezone.now() - timedelta(seconds=seconds_ago))
+
+    def test_question_group_on_top_in_queue_order(self):
+        services.mark(self.a)
+        services.set_away(self.d, True)
+        self.ask_at(self.b, "bug", 10)       # спросил позже
+        self.ask_at(self.a, "question", 60)  # спросил раньше, к тому же уже записал
+        groups = [(s["group"], s["name"], s.get("queue_pos")) for s in self.state()["students"]]
+        self.assertEqual(groups, [
+            ("question", "Айдар", 1), ("question", "Бек", 2),
+            ("offline", "Вера", None), ("away", "Гуля", None),
+        ])
+        state = self.state()
+        self.assertEqual(state["questions"], 2)
+        self.assertEqual(state["marked"], 1)  # вопрос не мешает отметке
+        self.assertEqual(state["students"][1]["question"], "bug")
+
+    def test_sort_question_above_all_groups(self):
+        rows = [
+            {"id": 1, "name": "Я", "group": "done"},
+            {"id": 2, "name": "Ю", "group": "away"},
+            {"id": 3, "name": "Э", "group": "offline"},
+            {"id": 4, "name": "Ь", "group": "wait"},
+            {"id": 5, "name": "Б", "group": "question", "question_at": 200.0},
+            {"id": 6, "name": "Я", "group": "question", "question_at": 100.0},
+        ]
+        self.assertEqual([r["id"] for r in services.sort_students(rows)], [6, 5, 4, 3, 2, 1])
+
+    def test_student_sees_only_own_position(self):
+        self.ask_at(self.a, "question", 30)
+        self.ask_at(self.b, "bug", 5)
+        state = self.state()
+        view_b = services.student_view(state, self.b.id)
+        self.assertEqual((view_b["question"], view_b["queue_pos"]), ("bug", 2))
+        self.assertNotIn("students", view_b)
+        self.assertNotIn("Айдар", str(view_b))
+        view_c = services.student_view(state, self.c.id)
+        self.assertEqual((view_c["question"], view_c["queue_pos"]), (None, None))
+        services.resolve(self.a)  # первый разобрался — второй стал первым
+        self.assertEqual(services.student_view(self.state(), self.b.id)["queue_pos"], 1)
+
+    def test_bad_type_and_away_rejected(self):
+        self.assertFalse(services.ask(self.a, "other"))
+        self.assertFalse(services.ask(self.a, None))
+        services.set_away(self.a, True)
+        self.assertFalse(services.ask(self.a, "question"))
+        self.assertEqual(self.state()["questions"], 0)
+
+    def test_reask_changes_type_keeps_place(self):
+        self.ask_at(self.a, "question", 30)
+        at = Student.objects.get(pk=self.a.pk).question_at
+        services.ask(self.a, "bug")
+        s = Student.objects.get(pk=self.a.pk)
+        self.assertEqual((s.question_type, s.question_at), ("bug", at))
+
+    def test_question_survives_reset(self):
+        services.ask(self.a, "question")
+        services.reset(self.room)
+        services.timer_reset(self.room.code, 2)
+        self.assertEqual(Student.objects.get(pk=self.a.pk).question_type, "question")
+
+    def test_away_and_kick_clear_question(self):
+        services.ask(self.a, "question")
+        services.set_away(self.a, True)
+        self.assertIsNone(Student.objects.get(pk=self.a.pk).question_type)
+        services.ask(self.b, "bug")
+        services.kick(self.room, self.b.id)
+        self.assertEqual(self.state()["questions"], 0)
+
+    def test_answer_only_in_own_room(self):
+        services.ask(self.a, "question")
+        other = Room.objects.create(code="9999", teacher_token="x")
+        self.assertFalse(services.answer(other, self.a.id))
+        self.assertTrue(services.answer(self.room, self.a.id))
+        self.assertIsNone(Student.objects.get(pk=self.a.pk).question_type)
+        self.assertFalse(services.answer(self.room, self.a.id))  # уже нет вопроса
+
+
 class ExpiryAndTimerServiceTests(TestCase):
     def setUp(self):
         self.room = Room.objects.create(code="3579", teacher_token="t")
@@ -755,6 +849,65 @@ class ConsumerTests(TransactionTestCase):
         await teacher.disconnect()
         await student.disconnect()
         await bek.disconnect()
+
+    # --- ✋ вопросы ----------------------------------------------------------
+
+    async def test_ask_resolve_by_student_answer_by_teacher(self):
+        teacher, student, _, _ = await self.connect_both()
+        await student.send_json_to({"type": "ask", "question_type": "bug"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((s["question"], s["queue_pos"]), ("bug", 1))
+        self.assertEqual((t["questions"], t["students"][0]["group"], t["students"][0]["question"]), (1, "question", "bug"))
+        await student.send_json_to({"type": "resolve"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((s["question"], t["questions"]), (None, 0))
+        await student.send_json_to({"type": "ask", "question_type": "question"})
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await teacher.send_json_to({"type": "answer", "student_id": self.student.id})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((s["question"], s["queue_pos"], t["questions"]), (None, None, 0))
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_question_permissions(self):
+        teacher, student, _, _ = await self.connect_both()
+        for action in ("ask", "resolve"):  # агай не задаёт вопросы за студента
+            await teacher.send_json_to({"type": action, "question_type": "question"})
+            msg = await teacher.receive_json_from()
+            self.assertEqual((msg["type"], msg["action"]), ("error", action))
+        await student.send_json_to({"type": "answer", "student_id": self.student.id})  # студент не «отвечает»
+        msg = await student.receive_json_from()
+        self.assertEqual((msg["type"], msg["action"]), ("error", "answer"))
+        await student.send_json_to({"type": "ask", "question_type": "hack"})  # неверный тип
+        msg = await student.receive_json_from()
+        self.assertEqual((msg["type"], msg["action"]), ("error", "ask"))
+        await teacher.send_json_to({"type": "answer", "student_id": "x"})
+        self.assertEqual((await teacher.receive_json_from())["type"], "error")
+        self.assertTrue(await teacher.receive_nothing())
+        row = await database_sync_to_async(Student.objects.get)(pk=self.student.pk)
+        self.assertIsNone(row.question_type)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_question_survives_new_round_and_away_clears(self):
+        teacher, student, _, _ = await self.connect_both()
+        await student.send_json_to({"type": "ask", "question_type": "question"})
+        await teacher.receive_json_from()
+        await student.receive_json_from()
+        await teacher.send_json_to({"type": "reset", "round": 1})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((t["round"], t["questions"], s["question"]), (2, 1, "question"))
+        await student.send_json_to({"type": "away"})
+        t = await teacher.receive_json_from()
+        s = await student.receive_json_from()
+        self.assertEqual((t["questions"], s["question"], s["away"]), (0, None, True))
+        await teacher.disconnect()
+        await student.disconnect()
 
     # --- настройка авто-раунда (set_auto_next) -------------------------------
 

@@ -10,24 +10,33 @@
   // Сервер присылает учеников уже отсортированными: группа (вопрос → ждём → вкладка закрыта →
   // вышел → записал), внутри — по алфавиту. Здесь только отрисовка.
   var STATUS = {
-    question: { icon: "hourglass", text: "Вопрос" },  // задание 3 — пока сервер не присылает
     wait: { icon: "hourglass", text: "Ждём" },
     offline: { icon: "wifi-off", text: "Вкладка закрыта",
                title: "Страница студента закрыта или нет интернета" },
     away: { icon: "door-open", text: "Вышел", title: "Студент нажал «Я вышел» — не считается в счётчике" },
     done: { icon: "check", text: "Записал" },
   };
-  var WAITING_GROUPS = { question: 1, wait: 1, offline: 1 };
-  var clockOffset = 0;  // серверное время − локальное, для «вышел N мин назад»
+  // группа question: статус — по типу вопроса
+  var QUESTION = {
+    question: { icon: "circle-help", text: "Вопрос", notify: "✋ Вопрос" },
+    bug: { icon: "bug", text: "Ошибка в коде", notify: "🐞 Ошибка в коде" },
+  };
+  var WAITING_GROUPS = { wait: 1, offline: 1 };
+  var clockOffset = 0;  // серверное время − локальное, для «вышел N мин назад» и «ждёт 1:20»
 
   function waiting() { return state.students.filter(function (s) { return WAITING_GROUPS[s.group]; }); }
+  function questions() { return state.students.filter(function (s) { return s.group === "question"; }); }
+  function serverNow() { return Date.now() + clockOffset; }
 
   function mmss(sec) { var m = Math.floor(sec / 60), s = sec % 60; return m + ":" + (s < 10 ? "0" : "") + s; }
 
   function whenText(s) {
+    if (s.group === "question" && s.question_at) {
+      return "ждёт " + mmss(Math.max(0, Math.floor((serverNow() - s.question_at * 1000) / 1000)));
+    }
     if (s.group === "done" && s.marked_after != null) return mmss(s.marked_after);
     if (s.group === "away" && s.away_since) {
-      var min = Math.floor((Date.now() + clockOffset - s.away_since * 1000) / 60000);
+      var min = Math.floor((serverNow() - s.away_since * 1000) / 60000);
       return min < 1 ? "вышел только что" : "вышел " + min + " мин назад";
     }
     return "";
@@ -41,9 +50,11 @@
   function studentChip(doc, s) {
     var li = doc.createElement("li");
     var offline = s.group === "offline";
-    li.className = "st st-wait" + (offline ? " st-offline" : "");
-    li.title = offline ? s.name + " — вкладка закрыта" : s.name;
-    if (offline) li.append(Realtime.icon("wifi-off", doc));
+    var q = s.group === "question";
+    li.className = "st st-wait" + (offline ? " st-offline" : "") + (q ? " st-question" : "");
+    li.title = q ? QUESTION[s.question].text + " — " + s.name : offline ? s.name + " — вкладка закрыта" : s.name;
+    if (q) li.append(Realtime.icon("hand", doc));
+    else if (offline) li.append(Realtime.icon("wifi-off", doc));
     else {
       var dot = doc.createElement("span");
       dot.className = "st-dot";
@@ -76,7 +87,7 @@
 
   // Строка таблицы: имя | статус | когда | крестик (виден при наведении/фокусе, место зарезервировано)
   function fillRow(row, s) {
-    var st = STATUS[s.group] || STATUS.wait;
+    var st = s.group === "question" ? QUESTION[s.question] || QUESTION.question : STATUS[s.group] || STATUS.wait;
     row.className = "roster-row r-" + s.group;
     row.textContent = "";
 
@@ -97,8 +108,20 @@
     var when = document.createElement("span");
     when.className = "r-when";
     when.setAttribute("role", "cell");
-    when.textContent = whenText(s);
+    var whenSpan = document.createElement("span");
+    whenSpan.className = "r-when-text";
+    whenSpan.textContent = whenText(s);
+    when.append(whenSpan);
     when.title = whenTitle(s);
+    if (s.group === "question") {  // «Ответил» — видна всегда у строк с вопросом
+      var ans = document.createElement("button");
+      ans.type = "button";
+      ans.className = "btn btn-sm btn-answer";
+      ans.setAttribute("aria-label", "Ответил: " + s.name);
+      ans.append(Realtime.icon("check"), document.createTextNode("Ответил"));
+      ans.addEventListener("click", function () { conn.send("answer", { student_id: s.id }); });
+      when.append(ans);
+    }
 
     var cell = document.createElement("span");
     cell.className = "r-kick";
@@ -139,6 +162,12 @@
       [880, 0.18, 0.26, 0.30, "triangle", [[1, 1]]],
     ],
   };
+  // вопрос студента — отдельный сигнал: два коротких высоких восходящих «пинга» (D6 → G6),
+  // заметно отличается от аккорда «все записали»; в выбор вариантов не входит
+  var QUESTION_SOUND = [
+    [1174.66, 0.00, 0.14, 0.22, "sine", [[1, 1], [2, 0.12]]],
+    [1567.98, 0.16, 0.20, 0.22, "sine", [[1, 1], [2, 0.12]]],
+  ];
 
   function load(key, fallback) {
     try { var v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; }
@@ -146,6 +175,7 @@
   function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
 
   var soundOn = load(SOUND_KEY, "on") !== "off";
+  var qSoundOn = load("zap_sound_question", "on") !== "off";  // «Сигнал о вопросе» — отдельно
   var variant = load(VARIANT_KEY, "chord");
   if (!VARIANTS[variant]) variant = "chord";
   var audioCtx = null;
@@ -163,7 +193,7 @@
 
   function synth(name) {
     var ctx = audioCtx, t0 = ctx.currentTime + 0.02;
-    VARIANTS[name].forEach(function (n) {
+    (name === "question" ? QUESTION_SOUND : VARIANTS[name]).forEach(function (n) {
       var start = t0 + n[1], end = start + n[2];
       n[5].forEach(function (partial) {
         var osc = ctx.createOscillator();
@@ -230,12 +260,48 @@
   var variantRadios = [].slice.call(document.querySelectorAll('input[name="sound-variant"]'));
 
   function renderSound() {
-    Realtime.setIconLabel(soundBtn, soundOn ? "bell" : "bell-off", "Звук");
-    soundBtn.classList.toggle("is-off", !soundOn);
-    soundBtn.title = soundOn ? "Звук вкл — выбрать сигнал" : "Звук выкл";
+    var any = soundOn || qSoundOn;
+    Realtime.setIconLabel(soundBtn, any ? "bell" : "bell-off", "Звук");
+    soundBtn.classList.toggle("is-off", !any);
+    soundBtn.title = any ? "Звук — сигналы и уведомления" : "Звук выкл";
     $("sound-on").checked = soundOn;
+    $("q-sound-on").checked = qSoundOn;
     $("sound-variants").classList.toggle("is-off", !soundOn);
     variantRadios.forEach(function (r) { r.checked = r.value === variant; });
+    renderNotify();
+  }
+
+  // --- системные уведомления о вопросе (Notification API) --------------------
+  // Разрешение спрашиваем только по клику агая; показываем, только если панель не в фокусе.
+  function renderNotify() {
+    var status = $("notify-status"), btn = $("notify-enable");
+    if (!("Notification" in window)) {
+      btn.hidden = true;
+      status.textContent = "недоступны в этом браузере";
+      return;
+    }
+    var p = Notification.permission;
+    btn.hidden = p !== "default";
+    status.className = "notify-status" + (p === "denied" ? " is-bad" : "");
+    status.textContent = p === "granted" ? "включены"
+      : p === "denied" ? "заблокированы — разрешите уведомления для этого сайта (значок слева в адресной строке)"
+      : "";
+  }
+  $("notify-enable").addEventListener("click", function () {
+    try {
+      var r = Notification.requestPermission(renderNotify);  // старые браузеры — колбэк
+      if (r && r.then) r.then(renderNotify, renderNotify);
+    } catch (e) { renderNotify(); }
+  });
+
+  function notifyQuestion(s) {
+    try {
+      if (!("Notification" in window) || Notification.permission !== "granted" || document.hasFocus()) return;
+      var n = new Notification((QUESTION[s.question] || QUESTION.question).notify + ": " + s.name, {
+        body: "Урок " + state.code, tag: "zap-question-" + s.id,
+      });
+      n.onclick = function () { window.focus(); n.close(); };
+    } catch (e) {}
   }
 
   popMenu("sound-menu", "sound-toggle", "sound-pop", function () {
@@ -256,6 +322,48 @@
   $("sound-test").addEventListener("click", function () {
     // клик сам по себе разрешает звук; ждём resume, чтобы первая проверка тоже прозвучала
     unlockAudio().then(function () { play(variant); }, function () {});
+  });
+  $("q-sound-on").addEventListener("change", function () {
+    qSoundOn = this.checked;
+    save("zap_sound_question", qSoundOn ? "on" : "off");
+    renderSound();
+  });
+  $("q-sound-test").addEventListener("click", function () {
+    unlockAudio().then(function () { play("question"); }, function () {});
+  });
+
+  // --- новый вопрос: звук (если вкл), чип мигает, title вкладки, мини-окно, уведомление ----
+  var knownQuestions = null;  // id -> question_at; null — ещё не было state (при загрузке не сигналим)
+  var baseTitle = document.title;
+
+  function checkQuestions() {
+    var now = {}, fresh = [];
+    questions().forEach(function (s) {
+      now[s.id] = s.question_at;
+      if (knownQuestions && knownQuestions[s.id] !== s.question_at) fresh.push(s);
+    });
+    knownQuestions = now;
+    if (!fresh.length) return;
+    var s = fresh[fresh.length - 1];
+    if (qSoundOn) play("question");
+    blinkChip();
+    if (document.hidden) document.title = "✋ Вопрос — " + s.name;  // пока агай не вернётся на вкладку
+    flashMini();
+    notifyQuestion(s);
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) document.title = baseTitle;
+  });
+
+  function blinkChip() {
+    var chip = $("q-chip");
+    chip.classList.remove("is-blink");
+    void chip.offsetWidth;  // перезапуск анимации
+    chip.classList.add("is-blink");
+  }
+  $("q-chip").addEventListener("animationend", function () { this.classList.remove("is-blink"); });
+  $("q-chip").addEventListener("click", function () {
+    $("roster-card").scrollIntoView({ behavior: reduceMotion.matches ? "auto" : "smooth", block: "start" });
   });
 
   // --- меню «Авто-раунд»: настройка хранится в комнате на сервере -----------
@@ -349,7 +457,7 @@
   $("code-chip").addEventListener("click", function () { setCodeHidden(false); $("btn-hide-code").focus(); });
   setCodeHidden(load(CODE_KEY, "0") === "1");  // по умолчанию показан — код нужно продиктовать
 
-  // --- таймер автосброса ---------------------------------------------------
+  // --- таймер раунда -------------------------------------------------------
   var updateCountdown = Realtime.countdown($("countdown"));
   var radios = [].slice.call(document.querySelectorAll('input[name="timer"]'));
   var presets = radios.map(function (r) { return r.value; }).filter(function (v) { return v !== "custom"; });
@@ -426,7 +534,7 @@
     var done = allDone();
     renderTimer();
     renderAuto();
-    // пока идёт отсчёт авто-раунда, строку автосброса не показываем — один отсчёт за раз
+    // пока идёт отсчёт авто-раунда, строку таймера раунда не показываем — один отсчёт за раз
     updateCountdown(state.auto_next_at ? { now: state.now } : state);
     updateAuto(state);
     $("all-done").hidden = !(done && !state.auto_next_enabled);  // авто-раунд выкл — сбрасывает агай
@@ -457,8 +565,10 @@
   function renderRoster() {
     var root = $("roster");
     // фокус на крестике переживает перерисовку: запоминаем, у кого он был
-    var focusedRow = document.activeElement && document.activeElement.closest && document.activeElement.closest(".roster-row");
+    var active = document.activeElement;
+    var focusedRow = active && active.closest && active.closest(".roster-row");
     var focusedId = focusedRow && root.contains(focusedRow) ? focusedRow.getAttribute("data-id") : null;
+    var focusedSel = active && active.classList && active.classList.contains("btn-answer") ? ".btn-answer" : ".st-kick";
 
     var before = {};  // First: где строки были
     Object.keys(rows).forEach(function (id) { before[id] = rows[id].getBoundingClientRect().top; });
@@ -492,35 +602,45 @@
       });
     }
 
-    var counts = { wait: 0, away: 0 };
-    state.students.forEach(function (s) {
-      if (WAITING_GROUPS[s.group]) counts.wait++;
-      else if (s.group === "away") counts.away++;
-    });
-    $("roster-summary").textContent = state.students.length
-      ? "Ждём " + counts.wait + " · Записали " + state.marked + " · Вышли " + counts.away
-      : "";
+    // сводка: «✋ Вопросы 2 · Ждём 3 · Записали 18 · Вышли 1»; «Ждём» = не записали из присутствующих
+    var nq = questions().length;
+    var summary = $("roster-summary");
+    summary.textContent = "";
+    if (state.students.length) {
+      if (nq) {
+        var qs = document.createElement("span");
+        qs.className = "summary-q";
+        qs.append(Realtime.icon("hand"), document.createTextNode("Вопросы " + nq));
+        summary.append(qs, document.createTextNode(" · "));
+      }
+      summary.append(document.createTextNode("Ждём " + (state.total - state.marked) + " · Записали " + state.marked
+        + " · Вышли " + (state.away || 0)));
+    }
     $("roster-empty").hidden = state.students.length > 0;
     document.querySelector(".roster-header").hidden = !state.students.length;
+    $("q-chip").hidden = !nq;
+    $("q-count").textContent = nq;
+    $("q-chip").title = nq ? "Вопросы: " + nq + " — показать в списке" : "";
 
     if (focusedId && rows[focusedId]) {
-      var again = rows[focusedId].querySelector(".st-kick");
+      var again = rows[focusedId].querySelector(focusedSel) || rows[focusedId].querySelector(".st-kick");
       if (again) again.focus();
     }
   }
 
-  // «вышел N мин назад» стареет без новых state — обновляем раз в 15 с
+  // «ждёт 1:20» и «вышел N мин назад» идут без новых state — обновляем раз в секунду
   setInterval(function () {
     state.students.forEach(function (s) {
-      if (s.group !== "away" || !rows[s.id]) return;
-      rows[s.id].querySelector(".r-when").textContent = whenText(s);
+      if ((s.group !== "away" && s.group !== "question") || !rows[s.id]) return;
+      rows[s.id].querySelector(".r-when-text").textContent = whenText(s);
     });
-  }, 15000);
+  }, 1000);
 
   // --- мини-окно агая: счётчик, прогресс, короткий список, «Сбросить» -------
   var mini = null;  // {doc, el}
 
-  // В окошке — только «Ждём» (вышедших не показываем); отсчёт авто-раунда — тот же, что в панели.
+  // В окошке: вопросы («✋ Фамилия Имя», жёлтые) сверху, затем «Ждём» (вышедших не показываем);
+  // отсчёт авто-раунда — тот же, что в панели.
   function renderMini(active) {
     if (!mini) return;
     var e = mini.el, doc = mini.doc;
@@ -530,17 +650,31 @@
     e.total.textContent = state.total;
     e.fill.style.width = (state.total ? Math.round((state.marked / state.total) * 100) : 0) + "%";
     e.reset.hidden = !active;
+    var qs = questions();
+    e.questions.textContent = "";
+    qs.forEach(function (s) { e.questions.append(studentChip(doc, s)); });
+    e.questions.hidden = !qs.length;
     var items = waiting();
     setGroupTitle(e["list-title"], "Ждём", items.length);
     e.list.textContent = "";
     items.forEach(function (s) { e.list.append(studentChip(doc, s)); });
     e.empty.textContent = "";
-    e.empty.hidden = items.length > 0;
-    if (!items.length) {
-      e.empty.append(emptyNote(doc, state.total
+    var allIn = state.total > 0 && state.marked === state.total;
+    e.empty.hidden = items.length > 0 || (state.total > 0 && !allIn);
+    if (!items.length && (allIn || !state.total)) {
+      e.empty.append(emptyNote(doc, allIn
         ? { icon: "check-check", text: "Все записали", good: true }
         : { text: "Пока никого. Продиктуйте код классу." }));
     }
+  }
+
+  // новый вопрос → мини-окно коротко подсвечивается
+  function flashMini() {
+    if (!mini) return;
+    var root = mini.doc.querySelector(".mini");
+    root.classList.remove("is-alert");
+    void root.offsetWidth;
+    root.classList.add("is-alert");
   }
 
   function openMini() {
@@ -589,7 +723,7 @@
   var conn = Realtime.connect(state.code, {
     role: "teacher",
     onMessage: function (msg) {
-      if (msg.type === "state") { state = msg; render(); checkSound(false); }
+      if (msg.type === "state") { state = msg; render(); checkSound(false); checkQuestions(); }
       else if (msg.type === "finished") showFinished();
     },
     onStatus: function (ok) { $("conn").hidden = ok; },
@@ -609,4 +743,5 @@
   renderSound();
   render();
   checkSound(true);  // если все уже записали до загрузки страницы — не пищим
+  checkQuestions();  // вопросы, открытые до загрузки, — без сигнала (запоминаем как известные)
 })();

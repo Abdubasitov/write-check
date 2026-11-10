@@ -2,7 +2,7 @@
   <div class="mini mini-student">
     <div class="mini-top">
       <span class="mini-round">Раунд <b data-mini="round"></b></span>
-      <span class="mini-countdown" data-mini="countdown" data-prefix="" hidden>{% icon "timer" %}<span class="cd-text"></span></span>
+      <span class="mini-countdown" data-mini="countdown" data-prefix="Таймер: " hidden>{% icon "timer" %}<span class="cd-text"></span></span>
       <button type="button" class="mini-icon" data-mini="expand" title="Развернуть" aria-label="Развернуть">{% icon "maximize-2" %}</button>
     </div>
     <p class="mini-auto mini-auto-line" data-mini="auto" data-prefix="Новый раунд через " role="status" hidden>{% icon "check-check" %}<span class="cd-text"></span></p>
@@ -18,6 +18,18 @@
         <button type="button" class="mini-back" data-mini="back">{% icon "log-in" %}<span data-mini="back-label">Я вернулся</span></button>
       </div>
     </div>
-    <button type="button" class="mini-link mini-away-btn" data-mini="away">{% icon "door-open" %}Я вышел</button>
+    {# вопрос открыт: место в очереди + «Разобрался»; «Записал» при этом работает #}
+    <div class="mini-q-open" data-mini="q-open" role="status" hidden>
+      <span class="mini-q-text">{% icon "hand" %}<span data-mini="q-text"></span></span>
+      <button type="button" class="mini-link" data-mini="resolve">Разобрался</button>
+    </div>
+    <div class="mini-q-choice" data-mini="q-choice" hidden>
+      <button type="button" class="mini-q-opt" data-mini="ask-question">{% icon "circle-help" %}Вопрос</button>
+      <button type="button" class="mini-q-opt" data-mini="ask-bug">{% icon "bug" %}Ошибка</button>
+    </div>
+    <div class="mini-bottom" data-mini="bottom">
+      <button type="button" class="mini-link mini-away-btn" data-mini="ask" aria-expanded="false">{% icon "hand" %}Вопрос</button>
+      <button type="button" class="mini-link mini-away-btn" data-mini="away">{% icon "door-open" %}Я вышел</button>
+    </div>
   </div>
 </template>

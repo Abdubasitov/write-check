@@ -21,9 +21,21 @@
         <button type="button" class="link-btn" id="btn-unmark">Отменить</button>
       </div>
       <p class="mark-error" id="mark-error" role="alert" hidden></p>
+      {# ✋ Вопрос: два варианта одним кликом; пока открыт — место в очереди и «Разобрался» #}
+      <div class="question-open" id="question-open" role="status" hidden>
+        <p class="question-open-text">{% icon "hand" %}<span><b>Вопрос отправлен</b> · <span id="queue-text"></span></span></p>
+        <button type="button" class="btn btn-sm" id="btn-resolve">{% icon "check" %}<span class="btn-label">Разобрался</span></button>
+      </div>
+      <div class="student-secondary">
+        <button type="button" class="btn btn-sm btn-ask" id="btn-ask" aria-expanded="false" aria-controls="ask-choice">{% icon "hand" %}Вопрос</button>
+        <button type="button" class="btn btn-ghost btn-sm btn-away" id="btn-away">{% icon "door-open" %}Я вышел</button>
+      </div>
+      <div class="ask-choice" id="ask-choice" role="group" aria-label="Что случилось" hidden>
+        <button type="button" class="btn btn-sm" id="ask-question">{% icon "circle-help" %}Вопрос</button>
+        <button type="button" class="btn btn-sm" id="ask-bug">{% icon "bug" %}Ошибка в коде</button>
+      </div>
       <button type="button" class="btn btn-big btn-pip" id="btn-pip" data-pip-only>{% icon "picture-in-picture-2" %}Свернуть в мини-окно</button>
       <p class="muted hint" data-pip-only>Окошко останется поверх VS Code — нажимайте «Записал» прямо в нём.</p>
-      <button type="button" class="btn btn-ghost btn-sm btn-away" id="btn-away">{% icon "door-open" %}Я вышел</button>
     </section>
 
     {# «Я вышел»: не считается в счётчике агая, пока не вернётся #}
