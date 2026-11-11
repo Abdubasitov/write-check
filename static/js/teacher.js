@@ -307,6 +307,13 @@
       if (open) menus.forEach(function (o) { if (o !== m && !o.pop.hidden) o.set(false); });
       m.pop.hidden = !open;
       m.btn.setAttribute("aria-expanded", String(open));
+      if (open) {  // узкий экран: сдвигаем меню, чтобы не выходило за край
+        m.pop.style.left = "";
+        var r = m.pop.getBoundingClientRect(), shift = 0;
+        if (r.right > window.innerWidth - 8) shift = window.innerWidth - 8 - r.right;
+        if (r.left + shift < 8) shift = 8 - r.left;
+        if (shift) m.pop.style.left = shift + "px";
+      }
       if (open) focusTarget().focus();
       else if (focusBack) m.btn.focus();
     };
@@ -695,6 +702,7 @@
     }
     $("roster-empty").hidden = state.students.length > 0;
     document.querySelector(".roster-header").hidden = !state.students.length;
+    fitRoster();
     $("q-chip").hidden = !nq;
     $("q-count").textContent = nq;
     $("q-chip").title = nq ? "Вопросы: " + nq + " — показать в списке" : "";
@@ -704,6 +712,31 @@
       if (again) again.focus();
     }
   }
+
+  // Одна строка или две: по реальным ширинам содержимого, а не по фиксированному порогу —
+  // так учитываются масштаб браузера (125% на ноутбуке), шрифты и что именно сейчас в пилюлях.
+  // Имени оставляем не меньше NAME_MIN (аватар + ~10 букв); не хватает — две строки.
+  var NAME_MIN = 170, COL_GAP = 12, ROW_PAD = 12;
+  function sumWidths(list, gap) {
+    var w = 0, n = 0;
+    [].forEach.call(list, function (c) { w += c.getBoundingClientRect().width; n++; });
+    return w + Math.max(0, n - 1) * gap;
+  }
+  function fitRoster() {
+    var card = $("roster-card"), table = card.querySelector(".roster-table");
+    var list = table.querySelectorAll("#roster .roster-row");
+    if (!list.length) { card.classList.remove("roster-compact"); return; }
+    var st = 0, wh = 88, ac = 0;
+    [].forEach.call(list, function (r) {
+      st = Math.max(st, sumWidths(r.querySelector(".r-status").children, 6));
+      wh = Math.max(wh, r.querySelector(".r-when-text").getBoundingClientRect().width);
+      ac = Math.max(ac, sumWidths(r.querySelector(".r-actions").children, 8));
+    });
+    var need = NAME_MIN + st + wh + ac + 3 * COL_GAP + ROW_PAD;
+    card.classList.toggle("roster-compact", table.clientWidth < need);
+  }
+  if (window.ResizeObserver) new ResizeObserver(function () { fitRoster(); }).observe($("roster-card"));
+  else window.addEventListener("resize", fitRoster);
 
   // «ждёт 1:20» и «вышел N мин назад» идут без новых state — обновляем раз в секунду
   setInterval(function () {

@@ -4,6 +4,7 @@ from urllib.parse import quote, unquote
 
 from django.conf import settings
 from django.contrib import messages
+from django.core.cache import cache
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
@@ -46,6 +47,34 @@ def _recent_fails(request):
     return fails
 
 
+# Лимит попыток пароля ещё и по IP: счётчик в сессии обходится, если не присылать cookie
+# (каждый запрос — новая сессия). Кэш — в памяти процесса, как и всё остальное (один сервер).
+def _client_ip(request):
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded and not settings.DEBUG:
+        # за прокси хостинга: последний адрес в цепочке дописал сам прокси, его не подделать
+        return forwarded.split(",")[-1].strip()
+    return request.META.get("REMOTE_ADDR", "")
+
+
+def _ip_key(request):
+    return "teacher_fails_ip:" + _client_ip(request)
+
+
+def _recent_ip_fails(request):
+    now = time.time()
+    return [t for t in cache.get(_ip_key(request), []) if now - t < settings.TEACHER_FAIL_WINDOW]
+
+
+def _add_ip_fail(request):
+    cache.set(_ip_key(request), _recent_ip_fails(request) + [time.time()], settings.TEACHER_FAIL_WINDOW)
+
+
+def _blocked(request):
+    limit = settings.TEACHER_MAX_FAILS
+    return len(_recent_fails(request)) >= limit or len(_recent_ip_fails(request)) >= limit
+
+
 def home(request):
     return render(request, "lessons/home.html")
 
@@ -58,12 +87,13 @@ def teacher_new(request):
 
     configured = bool(settings.TEACHER_PASSWORD)
     form = TeacherPasswordForm(request.POST or None)
-    blocked = len(_recent_fails(request)) >= settings.TEACHER_MAX_FAILS
+    blocked = _blocked(request)
     status = 429 if blocked else 200
 
     if request.method == "POST" and configured and not blocked and form.is_valid():
         if _same(form.cleaned_data["password"], settings.TEACHER_PASSWORD):
             request.session.pop(FAILS_KEY, None)
+            cache.delete(_ip_key(request))
             room = services.create_room()
             request.session.cycle_key()
             request.session[ROOM_KEY] = room.code
@@ -71,7 +101,8 @@ def teacher_new(request):
             return redirect("teacher", code=room.code)
         fails = _recent_fails(request) + [time.time()]
         request.session[FAILS_KEY] = fails
-        if len(fails) >= settings.TEACHER_MAX_FAILS:
+        _add_ip_fail(request)
+        if _blocked(request):
             blocked, status = True, 429
         else:
             form.add_error("password", "Неверный пароль")

@@ -496,6 +496,38 @@ class ConsumerTests(TransactionTestCase):
         await teacher.disconnect()
         await student.disconnect()
 
+    async def test_student_cannot_forge_any_teacher_action(self):
+        from .consumers import TEACHER_ACTIONS
+        teacher, student, _, _ = await self.connect_both()
+        before = await self.room_now()
+        for action in sorted(TEACHER_ACTIONS):
+            await student.send_json_to({"type": action, "student_id": self.student.id, "seconds": 5,
+                                        "enabled": False, "round": 1})
+            msg = await student.receive_json_from()
+            self.assertEqual((msg["type"], msg["action"]), ("error", action), action)
+        self.assertTrue(await teacher.receive_nothing())  # ни одной рассылки — ничего не изменилось
+        after = await self.room_now()
+        self.assertEqual((after.round, after.status, after.timer_seconds, after.auto_next_enabled, after.attention_at),
+                         (before.round, before.status, before.timer_seconds, before.auto_next_enabled, before.attention_at))
+        self.assertTrue(await database_sync_to_async(Student.objects.filter(pk=self.student.pk).exists)())
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_student_state_has_no_other_names(self):
+        await database_sync_to_async(Student.objects.create)(room=self.room, name="Секретная Фамилия", token="x2")
+        teacher, student, s_state, t_state = await self.connect_both()
+        self.assertIn("Секретная Фамилия", str(t_state))
+        self.assertNotIn("Секретная Фамилия", str(s_state))
+        self.assertNotIn("students", s_state)
+        await teacher.disconnect()
+        await student.disconnect()
+
+    async def test_foreign_origin_denied(self):
+        c = WebsocketCommunicator(application, f"/ws/rooms/{self.room.code}/teacher/",
+                                  headers=[(b"origin", b"http://evil.example"), (b"cookie", self.teacher_cookie)])
+        connected, _ = await c.connect()
+        self.assertFalse(connected)
+
     async def test_teacher_path_without_session_denied(self):
         c = self.comm(self.student_cookie, role="teacher")
         await c.connect()

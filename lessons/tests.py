@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from django.db import IntegrityError
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -11,6 +12,25 @@ PASSWORD = "test-pass"
 @override_settings(TEACHER_PASSWORD=PASSWORD)
 class TeacherPasswordTests(TestCase):
     url = reverse("teacher_new")
+
+    def setUp(self):
+        cache.clear()  # счётчик неверных паролей по IP живёт в кэше
+
+    def test_rate_limit_by_ip_without_cookies(self):
+        # перебор без cookie: каждая попытка — новая сессия, но IP тот же → после 5 блок
+        for _ in range(5):
+            self.client_class().post(self.url, {"password": "nope"})
+        r = self.client_class().post(self.url, {"password": PASSWORD})
+        self.assertEqual(r.status_code, 429)
+        self.assertFalse(Room.objects.exists())
+        # другой IP не заблокирован
+        r = self.client_class().post(self.url, {"password": PASSWORD}, REMOTE_ADDR="10.0.0.2")
+        self.assertEqual(r.status_code, 302)
+
+    def test_csrf_required(self):
+        c = self.client_class(enforce_csrf_checks=True)
+        self.assertEqual(c.post(self.url, {"password": PASSWORD}).status_code, 403)
+        self.assertFalse(Room.objects.exists())
 
     def test_correct_password_creates_room_and_redirects(self):
         r = self.client.post(self.url, {"password": PASSWORD})
@@ -155,6 +175,27 @@ class JoinTests(TestCase):
         self.join("Айдар Асанов")
         r = self.client.get(self.url)
         self.assertContains(r, 'value="Айдар Асанов"')
+
+    def test_join_csrf_required(self):
+        c = self.client_class(enforce_csrf_checks=True)
+        r = c.post(self.url, {"name": "Айдар", "code": self.room.code})
+        self.assertEqual(r.status_code, 403)
+        self.assertFalse(Student.objects.exists())
+
+    def test_name_with_html_is_escaped(self):
+        for name in ("<img src=x onerror=alert(1)>", "<b>жир</b>"):
+            client = self.client_class()
+            self.join(name, client=client)
+            page = client.get(reverse("room", args=[self.room.code]))
+            self.assertNotContains(page, name)  # сырого HTML на странице нет
+            self.assertContains(page, name.replace("<", "&lt;").replace(">", "&gt;"))
+
+    def test_empty_name_and_wrong_code(self):
+        self.assertContains(self.join(""), "Введите фамилию и имя")
+        r = self.client.post(self.url, {"name": "Айдар", "code": ""})
+        self.assertContains(r, "Введите код урока")
+        self.assertContains(self.join("Айдар", code="12ab"), "Урок не найден")
+        self.assertFalse(Student.objects.exists())
 
     def test_room_without_token_redirects_to_join(self):
         r = self.client.get(reverse("room", args=[self.room.code]))
